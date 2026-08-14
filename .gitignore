@@ -1,0 +1,11 @@
+# Runtime artifacts (created at run time — do not commit)
+lion_clean_exit.txt
+lion_error.log
+*.log
+
+# Backups produced by process_lion.ps1
+katong/*.bak.png
+
+# IDE / editor local config
+.claude/
+
