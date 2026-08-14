@@ -29,7 +29,7 @@ try {
 
 $script:Dir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:ImgPath = Join-Path $script:Dir 'katong\lion_crop.png'
-$script:LogPath = Join-Path $script:Dir 'lion_error.log'
+$script:LogPath = Join-Path $script:Dir 'lion.log'
 
 function Write-Log($msg) {
   try { Add-Content -Path $script:LogPath -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg) -Encoding UTF8 } catch {}
