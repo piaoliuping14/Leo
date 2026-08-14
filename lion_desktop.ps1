@@ -2,7 +2,7 @@
 #  桌面小助手 (Desktop Pet)
 #  显示在桌面上的悬浮宠物（狮子）：可拖拽（拖拽时摇摆）、
 #  单击弹出聊天气泡。
-#  图片: katong/lion_crop.png (由 狮子.png flood-fill 抠图得到，见 process_lion.ps1)
+#  图片: katong/狮子111-no-bg.png
 #
 #  用法:
 #     powershell -NoProfile -ExecutionPolicy Bypass -File lion_desktop.ps1
@@ -28,7 +28,7 @@ try {
 } catch {}
 
 $script:Dir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$script:ImgPath = Join-Path $script:Dir 'katong\lion_crop.png'
+$script:ImgPath = Join-Path $script:Dir 'katong\狮子111-no-bg.png'
 $script:LogPath = Join-Path $script:Dir 'lion.log'
 
 function Write-Log($msg) {
