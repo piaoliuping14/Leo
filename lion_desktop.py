@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import math
+import random
 import logging
 import socket
 import traceback
@@ -37,6 +38,11 @@ IMG_PATH = os.path.join(DIR, 'katong', '狮子111-no-bg.png')
 LOG_PATH = os.path.join(DIR, 'lion.log')
 CLEAN_EXIT = os.path.join(DIR, 'lion_clean_exit.txt')
 CONFIG_PATH = os.path.join(DIR, 'config.json')
+QUOTES_PATH = os.path.join(DIR, 'design', '文案.txt')
+
+# ---------- 闲置气泡默认配置 ----------
+IDLE_TIMEOUT = 60.0          # 闲置多少秒后触发
+IDLE_BUBBLE_DURATION = 10.0  # 闲置气泡显示时长
 
 # ---------- 快捷指令默认配置（config.json 缺失时回退）----------
 DEFAULT_COMMANDS = [
@@ -57,6 +63,36 @@ def load_commands():
     except Exception:
         pass
     return list(DEFAULT_COMMANDS)
+
+
+def load_idle_enabled():
+    """从 config.json 读取闲置气泡开关；默认开启。"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f).get('idle_bubble_enabled', True)
+    except Exception:
+        return True
+
+
+def load_quotes():
+    """从文案.txt 读取文案列表；每行一条，去除序号前缀。"""
+    try:
+        with open(QUOTES_PATH, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        quotes = []
+        for line in lines:
+            s = line.strip()
+            if not s:
+                continue
+            # 去掉 "1. " 等序号前缀
+            if len(s) > 2 and s[0].isdigit() and s[1] == '.':
+                s = s[2:].strip()
+            elif len(s) > 3 and s[0].isdigit() and s[1].isdigit() and s[2] == '.':
+                s = s[3:].strip()
+            quotes.append(s)
+        return quotes if quotes else ['静静陪伴你...']
+    except Exception:
+        return ['静静陪伴你...']
 
 # ---------- 日志 ----------
 _log = logging.getLogger('lion')
@@ -407,6 +443,124 @@ class BubbleWindow:
         self.close()
 
 
+# ---------- 闲置气泡 ----------
+class IdleBubble:
+    """闲置气泡：比正常气泡小、显示在桌宠上方、半透明、无关闭按钮。"""
+    KEY = 'magenta'
+    BG       = (252, 252, 254)
+    BORDER   = (214, 221, 234)
+    TEXT     = (80, 90, 110)
+    BW       = 150                    # 固定宽度，文字自动换行
+    PAD_LR   = 10
+    PAD_TB   = 8
+
+    def __init__(self, parent):
+        self.opened = False
+        self.fade = 0.0
+        self.bubble_photo = None
+        self._cur_tail = None
+
+        self.font = tkfont.Font(family='Microsoft YaHei UI', size=8)
+
+        self.top = tk.Toplevel(parent)
+        self.top.overrideredirect(True)
+        self.top.attributes('-topmost', True)
+        self.top.config(bg=self.KEY)
+        try:
+            self.top.wm_attributes('-transparentcolor', self.KEY)
+        except Exception:
+            pass
+        self.top.withdraw()
+
+        self.canvas = tk.Canvas(self.top, width=10, height=10,
+                                bg=self.KEY, highlightthickness=0, bd=0)
+        self.canvas.pack()
+        self.img_item = self.canvas.create_image(0, 0, anchor='nw')
+        self.label = None
+
+    @staticmethod
+    def _hex(rgb):
+        return '#%02x%02x%02x' % rgb
+
+    def _calc_height(self, text):
+        """根据文字宽度和固定气泡宽度计算换行后的高度。"""
+        import textwrap
+        wrapped = textwrap.wrap(text, width=12)   # 约每行 12 个中文字符
+        line_h = self.font.metrics('linespace')
+        return len(wrapped) * line_h + 2 * self.PAD_TB, wrapped
+
+    def _make_bubble_img(self, bh):
+        """生成圆角矩形气泡图（无尾巴，底部小三角指向下方）。"""
+        bw = self.BW
+        tail = 10
+        win_w = bw + 2
+        img = Image.new('RGBA', (win_w, bh + tail), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        r = 8
+        d.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=r,
+                            fill=self.BG, outline=self.BORDER, width=1)
+        # 底部小三角（指向桌宠）
+        cx = bw // 2
+        d.polygon([(cx - 5, bh - 1), (cx, bh + tail - 1), (cx + 5, bh - 1)],
+                  fill=self.BG)
+        d.line([(cx - 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
+        d.line([(cx + 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
+        return binarize_alpha(img), win_w, bh + tail
+
+    def _apply(self, text, wrapped):
+        bh, _ = self._calc_height(text)
+        img, win_w, full_h = self._make_bubble_img(bh)
+        self.bubble_photo = ImageTk.PhotoImage(img)
+        self.canvas.config(width=win_w, height=full_h)
+        self.canvas.itemconfig(self.img_item, image=self.bubble_photo)
+
+        if self.label:
+            self.label.destroy()
+        self.label = tk.Label(self.top, text='\n'.join(wrapped), font=self.font,
+                              fg=self._hex(self.TEXT), bg=self._hex(self.BG),
+                              relief='flat', bd=0, highlightthickness=0,
+                              justify='center')
+        self.label.place(x=1, y=self.PAD_TB, width=self.BW - 2,
+                         height=bh - 2 * self.PAD_TB)
+
+    def show(self, text, pet_x, pet_y, pet_fw, pet_fh):
+        import textwrap
+        bh, wrapped = self._calc_height(text)
+        self._apply(text, wrapped)
+
+        win_w = self.BW + 2
+        full_h = bh + 10
+        # 居中在桌宠上方
+        bx = int(pet_x + pet_fw / 2 - win_w / 2)
+        by = int(pet_y - full_h - 4)
+        wa = working_area()
+        bx = max(4, min(wa[2] - win_w - 4, bx))
+        by = max(4, by)
+        self.top.geometry('%dx%d+%d+%d' % (win_w, full_h, bx, by))
+
+        self.opened = True
+        self.fade = 0.0
+        self.top.attributes('-alpha', 0.0)
+        self.top.deiconify()
+
+    def tick(self, dt):
+        if self.opened:
+            self.fade += dt * 5.0
+            try:
+                self.top.attributes('-alpha', min(0.88, self.fade))
+            except Exception:
+                pass
+
+    def close(self):
+        self.opened = False
+        self.fade = 0.0
+        try:
+            self.top.attributes('-alpha', 0.0)
+            self.top.withdraw()
+        except Exception:
+            pass
+
+
 # ---------- 桌宠主体 ----------
 class LionPet:
     PAD = 26                                   # 四周留白（容纳摇摆/弹跳不裁切）
@@ -451,6 +605,12 @@ class LionPet:
         self.drag_logged = False
         self.bubble_open = False
 
+        # 闲置气泡状态
+        self.idle_enabled = load_idle_enabled()
+        self.idle_timer = 0.0
+        self.idle_bubble_timer = 0.0
+        self.quotes = load_quotes()
+
         # 主窗口（无边框 / 置顶 / 不在任务栏 / magenta 透明键）
         self.root = tk.Tk()
         self.root.title('Desktop Lion')
@@ -484,6 +644,7 @@ class LionPet:
         # 快捷指令 & 气泡
         self.commands = load_commands()
         self.bubble = BubbleWindow(self.root, self._on_bubble_closed)
+        self.idle_bubble = IdleBubble(self.root)
 
         # 右键菜单
         self.menu = tk.Menu(self.root, tearoff=0)
@@ -497,6 +658,7 @@ class LionPet:
 
     # ---------- 鼠标 ----------
     def _on_down(self, e):
+        self._reset_idle()
         self.down = True
         self.dragging = False
         self.base_x = self.x
@@ -552,6 +714,15 @@ class LionPet:
     def _on_bubble_closed(self):
         """气泡关闭时同步状态（由 × 按钮或按钮回调触发）。"""
         self.bubble_open = False
+        self._reset_idle()
+
+    # ---------- 闲置气泡 ----------
+    def _reset_idle(self):
+        """任何交互都重置闲置计时，并关闭正在显示的闲置气泡。"""
+        self.idle_timer = 0.0
+        if self.idle_bubble.opened:
+            self.idle_bubble.close()
+        self.idle_bubble_timer = 0.0
 
     def _toggle_bubble(self):
         if self.bubble_open:
@@ -660,6 +831,10 @@ class LionPet:
         except Exception:
             pass
         try:
+            self.idle_bubble.close()
+        except Exception:
+            pass
+        try:
             self.root.destroy()
         except Exception:
             pass
@@ -693,6 +868,24 @@ class LionPet:
         self._render()
         if self.bubble_open:
             self.bubble.tick(dt)
+
+        # 闲置气泡逻辑
+        if self.idle_enabled:
+            if self.idle_bubble.opened:
+                # 闲置气泡显示中：计时 10 秒后自动关闭并重新开始
+                self.idle_bubble.tick(dt)
+                self.idle_bubble_timer += dt
+                if self.idle_bubble_timer >= IDLE_BUBBLE_DURATION:
+                    self.idle_bubble.close()
+                    self.idle_bubble_timer = 0.0
+                    self.idle_timer = 0.0
+            else:
+                # 闲置计时：1 分钟无交互后触发
+                self.idle_timer += dt
+                if self.idle_timer >= IDLE_TIMEOUT:
+                    quote = random.choice(self.quotes)
+                    self.idle_bubble.show(quote, self.x, self.y, self.fw, self.fh)
+                    self.idle_bubble_timer = 0.0
 
     def _tick(self):
         self._step(0.033)

@@ -74,6 +74,10 @@
 
 <!-- ============ 主页 ============ -->
 <main id="view-home" class="view active">
+  <!-- 左上角设置按钮 -->
+  <button id="btn-settings" class="btn absolute top-4 left-4 w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted z-10">
+    <i data-lucide="settings" class="w-5 h-5 text-muted-foreground"></i>
+  </button>
   <div class="flex items-center justify-center min-h-screen p-4">
     <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] p-6 flex flex-col gap-5" style="box-shadow:var(--shadow-2)">
       <!-- 宠物状态 -->
@@ -170,6 +174,34 @@
         <button id="btn-cancel" class="btn btn-ghost flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">取消</button>
         <button id="btn-save" class="btn btn-primary flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">保存</button>
       </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 设置 ============ -->
+<main id="view-settings" class="view">
+  <div class="max-w-[400px] mx-auto px-4 py-6 flex flex-col gap-5">
+    <!-- Header -->
+    <div class="flex items-center gap-3">
+      <button id="btn-settings-back" class="btn w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted shrink-0">
+        <i data-lucide="chevron-left" class="w-5 h-5"></i>
+      </button>
+      <div class="flex-1">
+        <h1 class="text-xl font-bold tracking-tight">设置</h1>
+      </div>
+    </div>
+
+    <!-- 闲置气泡开关 -->
+    <div class="bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex items-center justify-between" style="box-shadow:var(--shadow-1)">
+      <div class="flex flex-col gap-1">
+        <p class="text-sm font-medium">闲置气泡</p>
+        <p class="text-xs text-muted-foreground">桌宠闲置 1 分钟后自动弹出气泡文案</p>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer shrink-0">
+        <input type="checkbox" id="toggle-idle" class="sr-only peer" checked />
+        <div class="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-[var(--brand-primary)] transition-colors"></div>
+        <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+      </label>
     </div>
   </div>
 </main>
@@ -358,6 +390,19 @@ $('btn-back').addEventListener('click', ()=>{ showView('view-home'); });
 $('btn-add').addEventListener('click', addCommand);
 $('btn-cancel').addEventListener('click', hideForm);
 $('btn-save').addEventListener('click', saveCommand);
+
+// ---------- 设置 ----------
+$('btn-settings').addEventListener('click', async ()=>{
+  showView('view-settings');
+  try {
+    const s = await window.pywebview.api.get_settings();
+    $('toggle-idle').checked = s.idle_bubble_enabled !== false;
+  } catch(e){}
+});
+$('btn-settings-back').addEventListener('click', ()=>{ showView('view-home'); });
+$('toggle-idle').addEventListener('change', async ()=>{
+  await window.pywebview.api.save_settings({idle_bubble_enabled: $('toggle-idle').checked});
+});
 
 // ---------- 应用选择浮层 ----------
 let allApps = [];

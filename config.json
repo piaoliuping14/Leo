@@ -24,5 +24,6 @@
       "target": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
       "icon": "monitor"
     }
-  ]
+  ],
+  "idle_bubble_enabled": true
 }

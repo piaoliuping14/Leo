@@ -158,9 +158,37 @@ Get-StartApps | ForEach-Object {
 
     def save_commands(self, commands):
         try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data['commands'] = commands
+        try:
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump({'commands': commands}, f,
-                          ensure_ascii=False, indent=2)
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            return False
+        return True
+
+    # ---------- 设置 ----------
+    def get_settings(self):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return {'idle_bubble_enabled': data.get('idle_bubble_enabled', True)}
+        except Exception:
+            return {'idle_bubble_enabled': True}
+
+    def save_settings(self, settings):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data['idle_bubble_enabled'] = settings.get('idle_bubble_enabled', True)
+        try:
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             return False
         return True
