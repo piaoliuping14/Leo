@@ -191,17 +191,32 @@
       </div>
     </div>
 
-    <!-- 闲置气泡开关 -->
-    <div class="bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex items-center justify-between" style="box-shadow:var(--shadow-1)">
-      <div class="flex flex-col gap-1">
-        <p class="text-sm font-medium">闲置气泡</p>
-        <p class="text-xs text-muted-foreground">桌宠闲置 1 分钟后自动弹出气泡文案</p>
+    <!-- 加油哇~ 设置卡片 -->
+    <div class="bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex flex-col gap-3" style="box-shadow:var(--shadow-1)">
+      <!-- 开关行 -->
+      <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-1">
+          <p class="text-sm font-medium">加油哇~</p>
+          <p class="text-xs text-muted-foreground">开启后桌宠会按设定间隔循环加油</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+          <input type="checkbox" id="toggle-idle" class="sr-only peer" checked />
+          <div class="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-[var(--brand-primary)] transition-colors"></div>
+          <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+        </label>
       </div>
-      <label class="relative inline-flex items-center cursor-pointer shrink-0">
-        <input type="checkbox" id="toggle-idle" class="sr-only peer" checked />
-        <div class="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-[var(--brand-primary)] transition-colors"></div>
-        <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
-      </label>
+      <!-- 分隔线 -->
+      <div class="h-px bg-border"></div>
+      <!-- 间隔配置行 -->
+      <div class="flex items-center gap-2">
+        <span class="text-sm">小Leo每隔</span>
+        <input id="input-interval" type="text" inputmode="numeric" class="field" style="width:64px; height:32px; text-align:center; padding:0 4px; font-size:14px;" value="60" />
+        <span class="text-sm">秒给你加油喔~</span>
+      </div>
+      <!-- 保存按钮 -->
+      <button id="btn-save-settings" class="btn btn-primary w-full py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium flex items-center justify-center gap-2">
+        <i data-lucide="check" class="w-4 h-4"></i><span>保存</span>
+      </button>
     </div>
   </div>
 </main>
@@ -397,11 +412,35 @@ $('btn-settings').addEventListener('click', async ()=>{
   try {
     const s = await window.pywebview.api.get_settings();
     $('toggle-idle').checked = s.idle_bubble_enabled !== false;
+    $('input-interval').value = s.idle_timeout || 60;
+    lucide.createIcons();
   } catch(e){}
 });
 $('btn-settings-back').addEventListener('click', ()=>{ showView('view-home'); });
-$('toggle-idle').addEventListener('change', async ()=>{
-  await window.pywebview.api.save_settings({idle_bubble_enabled: $('toggle-idle').checked});
+// 输入框仅允许数字
+$('input-interval').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9]/g, '');
+});
+// 保存设置：开关 + 间隔，立即生效
+$('btn-save-settings').addEventListener('click', async () => {
+  const enabled = $('toggle-idle').checked;
+  let timeout = parseInt($('input-interval').value);
+  if (!timeout || timeout < 1) timeout = 60;
+  try {
+    await window.pywebview.api.save_settings({
+      idle_bubble_enabled: enabled,
+      idle_timeout: timeout
+    });
+    // 保存成功反馈
+    const btn = $('btn-save-settings');
+    const span = btn.querySelector('span');
+    const orig = span.textContent;
+    span.textContent = '已保存';
+    btn.style.opacity = '0.8';
+    setTimeout(() => { span.textContent = orig; btn.style.opacity = ''; }, 1500);
+  } catch(e) {
+    alert('保存失败，请重试');
+  }
 });
 
 // ---------- 应用选择浮层 ----------

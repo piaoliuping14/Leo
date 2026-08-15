@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import math
+import time
 import random
 import logging
 import socket
@@ -74,8 +75,19 @@ def load_idle_enabled():
         return True
 
 
+def load_idle_timeout():
+    """从 config.json 读取闲置气泡间隔秒数；默认60秒。"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            v = json.load(f).get('idle_timeout', 60)
+        return max(1, int(v))
+    except Exception:
+        return 60
+
+
 def load_quotes():
-    """从文案.txt 读取文案列表；每行一条，去除序号前缀。"""
+    """从文案.txt 读取文案列表；每行一条，去除序号前缀（支持1-3位数）。"""
+    import re
     try:
         with open(QUOTES_PATH, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -84,11 +96,8 @@ def load_quotes():
             s = line.strip()
             if not s:
                 continue
-            # 去掉 "1. " 等序号前缀
-            if len(s) > 2 and s[0].isdigit() and s[1] == '.':
-                s = s[2:].strip()
-            elif len(s) > 3 and s[0].isdigit() and s[1].isdigit() and s[2] == '.':
-                s = s[3:].strip()
+            # 去掉 "1. " / "10. " / "100. " 等序号前缀
+            s = re.sub(r'^\d+\.\s*', '', s)
             quotes.append(s)
         return quotes if quotes else ['静静陪伴你...']
     except Exception:
@@ -459,6 +468,10 @@ class IdleBubble:
         self.fade = 0.0
         self.bubble_photo = None
         self._cur_tail = None
+        self._cur_text = ''
+        self._cur_wrapped = []
+        self._cur_tail_bottom = True
+        self._cur_bw = self.BW            # 当前气泡宽度（可能因文案自适应加宽）
 
         self.font = tkfont.Font(family='Microsoft YaHei UI', size=8)
 
@@ -483,33 +496,59 @@ class IdleBubble:
         return '#%02x%02x%02x' % rgb
 
     def _calc_height(self, text):
-        """根据文字宽度和固定气泡宽度计算换行后的高度。"""
+        """根据文字宽度计算换行后的高度。
+        若最后一行只有句号或1-2字+句号，自动加宽气泡让整段文案显示为一行。"""
         import textwrap
-        wrapped = textwrap.wrap(text, width=12)   # 约每行 12 个中文字符
+        import re
         line_h = self.font.metrics('linespace')
+        wrapped = textwrap.wrap(text, width=12)   # 约每行 12 个中文字符
+
+        # 检测：换行后多于1行，且最后一行只有"。"或1-2字+"。" -> 尝试合并为一行
+        if len(wrapped) >= 2 and re.match(r'^.{0,2}。$', wrapped[-1]):
+            text_w = self.font.measure(text)
+            needed_bw = text_w + 2 * self.PAD_LR
+            # 限制最大宽度，不超过工作区宽度的80%
+            wa = working_area()
+            max_bw = min(320, int((wa[2] - wa[0]) * 0.8))
+            if needed_bw <= max_bw:
+                self._cur_bw = needed_bw
+                return line_h + 2 * self.PAD_TB, [text]
+
+        self._cur_bw = self.BW
         return len(wrapped) * line_h + 2 * self.PAD_TB, wrapped
 
-    def _make_bubble_img(self, bh):
-        """生成圆角矩形气泡图（无尾巴，底部小三角指向下方）。"""
-        bw = self.BW
+    def _make_bubble_img(self, bh, tail_bottom=True):
+        """生成圆角矩形气泡图。
+        tail_bottom=True  -> 底部小三角指向下方（气泡在桌宠上方时用）
+        tail_bottom=False -> 顶部小三角指向上方（气泡在桌宠下方时用）"""
+        bw = self._cur_bw
         tail = 10
         win_w = bw + 2
         img = Image.new('RGBA', (win_w, bh + tail), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         r = 8
-        d.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=r,
-                            fill=self.BG, outline=self.BORDER, width=1)
-        # 底部小三角（指向桌宠）
         cx = bw // 2
-        d.polygon([(cx - 5, bh - 1), (cx, bh + tail - 1), (cx + 5, bh - 1)],
-                  fill=self.BG)
-        d.line([(cx - 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
-        d.line([(cx + 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
+        if tail_bottom:
+            # 圆角矩形在上方，底部三角指向下方
+            d.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=r,
+                                fill=self.BG, outline=self.BORDER, width=1)
+            d.polygon([(cx - 5, bh - 1), (cx, bh + tail - 1), (cx + 5, bh - 1)],
+                      fill=self.BG)
+            d.line([(cx - 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
+            d.line([(cx + 5, bh - 1), (cx, bh + tail - 1)], fill=self.BORDER, width=1)
+        else:
+            # 顶部三角指向上方，圆角矩形在下方
+            d.polygon([(cx - 5, tail), (cx, 0), (cx + 5, tail)],
+                      fill=self.BG)
+            d.rounded_rectangle([0, tail, bw - 1, bh + tail - 1], radius=r,
+                                fill=self.BG, outline=self.BORDER, width=1)
+            d.line([(cx - 5, tail), (cx, 0)], fill=self.BORDER, width=1)
+            d.line([(cx + 5, tail), (cx, 0)], fill=self.BORDER, width=1)
         return binarize_alpha(img), win_w, bh + tail
 
-    def _apply(self, text, wrapped):
+    def _apply(self, text, wrapped, tail_bottom=True):
         bh, _ = self._calc_height(text)
-        img, win_w, full_h = self._make_bubble_img(bh)
+        img, win_w, full_h = self._make_bubble_img(bh, tail_bottom)
         self.bubble_photo = ImageTk.PhotoImage(img)
         self.canvas.config(width=win_w, height=full_h)
         self.canvas.itemconfig(self.img_item, image=self.bubble_photo)
@@ -520,28 +559,59 @@ class IdleBubble:
                               fg=self._hex(self.TEXT), bg=self._hex(self.BG),
                               relief='flat', bd=0, highlightthickness=0,
                               justify='center')
-        self.label.place(x=1, y=self.PAD_TB, width=self.BW - 2,
+        # 尾巴在顶部时，圆角矩形向下偏移 tail 像素，label 跟随偏移
+        label_y = self.PAD_TB if tail_bottom else 10 + self.PAD_TB
+        self.label.place(x=1, y=label_y, width=self._cur_bw - 2,
                          height=bh - 2 * self.PAD_TB)
 
-    def show(self, text, pet_x, pet_y, pet_fw, pet_fh):
-        import textwrap
-        bh, wrapped = self._calc_height(text)
-        self._apply(text, wrapped)
-
-        win_w = self.BW + 2
-        full_h = bh + 10
-        # 居中在桌宠上方
-        bx = int(pet_x + pet_fw / 2 - win_w / 2)
-        by = int(pet_y - full_h - 4)
+    def _compute_pos(self, pet_x, pet_y, pet_fw, pet_fh, full_h):
+        """计算气泡位置和尾巴方向。
+        上方放得下 -> 气泡在上方、尾巴朝下；放不下 -> 气泡在下方、尾巴朝上。"""
         wa = working_area()
-        bx = max(4, min(wa[2] - win_w - 4, bx))
-        by = max(4, by)
+        win_w = self._cur_bw + 2
+        by_top = int(pet_y - full_h - 4)
+        if by_top >= wa[1] + 4:
+            tail_bottom = True
+            by = by_top
+        else:
+            tail_bottom = False
+            by = int(pet_y + pet_fh + 4)
+        bx = int(pet_x + pet_fw / 2 - win_w / 2)
+        bx = max(wa[0] + 4, min(wa[2] - win_w - 4, bx))
+        by = max(wa[1] + 4, min(wa[3] - full_h - 4, by))
+        return bx, by, tail_bottom
+
+    def show(self, text, pet_x, pet_y, pet_fw, pet_fh):
+        bh, wrapped = self._calc_height(text)
+        self._cur_text = text
+        self._cur_wrapped = wrapped
+
+        win_w = self._cur_bw + 2
+        full_h = bh + 10
+        bx, by, tail_bottom = self._compute_pos(pet_x, pet_y, pet_fw, pet_fh, full_h)
+        self._cur_tail_bottom = tail_bottom
+
+        self._apply(text, wrapped, tail_bottom)
         self.top.geometry('%dx%d+%d+%d' % (win_w, full_h, bx, by))
 
         self.opened = True
         self.fade = 0.0
         self.top.attributes('-alpha', 0.0)
         self.top.deiconify()
+
+    def position(self, pet_x, pet_y, pet_fw, pet_fh):
+        """桌宠移动时同步更新闲置气泡位置（方向变化时重建气泡图）。"""
+        if not self.opened:
+            return
+        bh, _ = self._calc_height(self._cur_text)
+        win_w = self._cur_bw + 2
+        full_h = bh + 10
+        bx, by, tail_bottom = self._compute_pos(pet_x, pet_y, pet_fw, pet_fh, full_h)
+        # 尾巴方向变化 -> 重建气泡图和 label 位置
+        if tail_bottom != self._cur_tail_bottom:
+            self._cur_tail_bottom = tail_bottom
+            self._apply(self._cur_text, self._cur_wrapped, tail_bottom)
+        self.top.geometry('%dx%d+%d+%d' % (win_w, full_h, bx, by))
 
     def tick(self, dt):
         if self.opened:
@@ -607,9 +677,11 @@ class LionPet:
 
         # 闲置气泡状态
         self.idle_enabled = load_idle_enabled()
+        self.idle_timeout = load_idle_timeout()
         self.idle_timer = 0.0
         self.idle_bubble_timer = 0.0
         self.quotes = load_quotes()
+        self._config_check_timer = 0.0
 
         # 主窗口（无边框 / 置顶 / 不在任务栏 / magenta 透明键）
         self.root = tk.Tk()
@@ -654,11 +726,11 @@ class LionPet:
 
         self._last_key = None
         self._render()
+        self._last_tick = time.perf_counter()
         self.root.after(33, self._tick)
 
     # ---------- 鼠标 ----------
     def _on_down(self, e):
-        self._reset_idle()
         self.down = True
         self.dragging = False
         self.base_x = self.x
@@ -694,6 +766,8 @@ class LionPet:
             self.root.geometry('+%d+%d' % (int(self.x), int(self.y)))
             if self.bubble_open:
                 self.bubble.position(self.x, self.y, self.fw, self.fh)
+            if self.idle_bubble.opened:
+                self.idle_bubble.position(self.x, self.y, self.fw, self.fh)
 
     def _on_up(self, e):
         if not self.down:
@@ -712,18 +786,11 @@ class LionPet:
 
     # ---------- 气泡 ----------
     def _on_bubble_closed(self):
-        """气泡关闭时同步状态（由 × 按钮或按钮回调触发）。"""
+        """气泡关闭时同步状态（由 × 按钮或按钮回调触发）。
+        注意：交互行为不重置闲置计时，闲置气泡按自身节奏运行。"""
         self.bubble_open = False
-        self._reset_idle()
 
     # ---------- 闲置气泡 ----------
-    def _reset_idle(self):
-        """任何交互都重置闲置计时，并关闭正在显示的闲置气泡。"""
-        self.idle_timer = 0.0
-        if self.idle_bubble.opened:
-            self.idle_bubble.close()
-        self.idle_bubble_timer = 0.0
-
     def _toggle_bubble(self):
         if self.bubble_open:
             self.bubble.close()
@@ -819,6 +886,8 @@ class LionPet:
         self.root.geometry('+%d+%d' % (int(self.x), int(self.y)))
         if self.bubble_open:
             self.bubble.position(self.x, self.y, self.fw, self.fh)
+        if self.idle_bubble.opened:
+            self.idle_bubble.position(self.x, self.y, self.fw, self.fh)
 
     def _quit(self):
         try:
@@ -869,6 +938,22 @@ class LionPet:
         if self.bubble_open:
             self.bubble.tick(dt)
 
+        # 配置热更新：每2秒轮询 config.json，检测开关和间隔是否被管理软件修改
+        self._config_check_timer += dt
+        if self._config_check_timer >= 2.0:
+            self._config_check_timer = 0.0
+            new_enabled = load_idle_enabled()
+            new_timeout = load_idle_timeout()
+            if new_enabled != self.idle_enabled or new_timeout != self.idle_timeout:
+                self.idle_enabled = new_enabled
+                self.idle_timeout = new_timeout
+                # 配置变更 -> 立即重置倒计时
+                self.idle_timer = 0.0
+                self.idle_bubble_timer = 0.0
+                # 开关关闭时，关闭正在显示的闲置气泡
+                if not self.idle_enabled and self.idle_bubble.opened:
+                    self.idle_bubble.close()
+
         # 闲置气泡逻辑
         if self.idle_enabled:
             if self.idle_bubble.opened:
@@ -880,15 +965,21 @@ class LionPet:
                     self.idle_bubble_timer = 0.0
                     self.idle_timer = 0.0
             else:
-                # 闲置计时：1 分钟无交互后触发
+                # 闲置计时：按配置间隔触发
                 self.idle_timer += dt
-                if self.idle_timer >= IDLE_TIMEOUT:
+                if self.idle_timer >= self.idle_timeout:
                     quote = random.choice(self.quotes)
                     self.idle_bubble.show(quote, self.x, self.y, self.fw, self.fh)
                     self.idle_bubble_timer = 0.0
 
     def _tick(self):
-        self._step(0.033)
+        now = time.perf_counter()
+        dt = now - self._last_tick
+        self._last_tick = now
+        # 限制单帧最大步长，防止窗口被挂起后恢复时产生超大 dt
+        if dt > 0.1:
+            dt = 0.1
+        self._step(dt)
         self.root.after(33, self._tick)
 
     def run(self):
@@ -919,6 +1010,25 @@ def acquire_lock(port=52718):
         return None
 
 
+def _drain_lock_socket(sock):
+    """后台线程：持续 accept() 锁端口上的连接并立即关闭。
+    防止管理软件的 get_status() 轮询连接堆积在 accept 队列中，
+    导致 backlog 满后新连接被拒、状态误判为"未在线"。"""
+    import threading
+    def worker():
+        while True:
+            try:
+                conn, _ = sock.accept()
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            except Exception:
+                break
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+
 def main():
     test = False
     scale = 0.07
@@ -933,6 +1043,7 @@ def main():
     _lock = acquire_lock()                     # 必须持有引用，否则 socket 被 GC 后端口关闭
     if _lock is None:                          # 已有实例在跑 -> 退出
         sys.exit(0)
+    _drain_lock_socket(_lock)                  # 消费 accept 队列，防止 backlog 满导致状态误判
     try:
         pet = LionPet(scale=scale)
         if test:

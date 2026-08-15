@@ -175,9 +175,12 @@ Get-StartApps | ForEach-Object {
         try:
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return {'idle_bubble_enabled': data.get('idle_bubble_enabled', True)}
+            return {
+                'idle_bubble_enabled': data.get('idle_bubble_enabled', True),
+                'idle_timeout': data.get('idle_timeout', 60)
+            }
         except Exception:
-            return {'idle_bubble_enabled': True}
+            return {'idle_bubble_enabled': True, 'idle_timeout': 60}
 
     def save_settings(self, settings):
         try:
@@ -186,6 +189,7 @@ Get-StartApps | ForEach-Object {
         except Exception:
             data = {}
         data['idle_bubble_enabled'] = settings.get('idle_bubble_enabled', True)
+        data['idle_timeout'] = settings.get('idle_timeout', 60)
         try:
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

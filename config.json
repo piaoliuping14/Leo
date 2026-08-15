@@ -23,7 +23,14 @@
       "type": "app",
       "target": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
       "icon": "monitor"
+    },
+    {
+      "name": "百度网盘",
+      "type": "file",
+      "target": "C:\\Users\\99225\\AppData\\Roaming\\baidu\\BaiduNetdisk\\BaiduNetdisk.exe",
+      "icon": "monitor"
     }
   ],
-  "idle_bubble_enabled": true
+  "idle_bubble_enabled": true,
+  "idle_timeout": 5
 }
