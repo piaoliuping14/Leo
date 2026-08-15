@@ -7,34 +7,16 @@
       "icon": "play"
     },
     {
-<<<<<<< HEAD
       "name": "Claude",
       "type": "app",
       "target": "electron.app.Claude",
       "icon": "monitor"
     },
     {
-=======
->>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
       "name": "ChatGPT",
       "type": "app",
       "target": "OpenAI.Codex_2p2nqsd0c76g0!App",
       "icon": "monitor"
-<<<<<<< HEAD
-=======
-    },
-    {
-      "name": "计算器",
-      "type": "app",
-      "target": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
-      "icon": "monitor"
-    },
-    {
-      "name": "Claude",
-      "type": "app",
-      "target": "electron.app.Claude",
-      "icon": "monitor"
->>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
     }
   ]
 }
