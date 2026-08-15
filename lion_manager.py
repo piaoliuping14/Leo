@@ -49,7 +49,7 @@ def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
     - config.json 不存在：不做处理
     - machine_id 缺失：首次运行，写入当前机器 ID
-    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60，更新机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -68,6 +68,7 @@ def _ensure_device_config():
     elif cur_mid and saved_mid != cur_mid:
         try:
             data['idle_timeout'] = 60
+            data['nickname'] = '小Leo'
             data['machine_id'] = cur_mid
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -221,10 +222,11 @@ Get-StartApps | ForEach-Object {
                 data = json.load(f)
             return {
                 'idle_bubble_enabled': data.get('idle_bubble_enabled', True),
-                'idle_timeout': data.get('idle_timeout', 60)
+                'idle_timeout': data.get('idle_timeout', 60),
+                'nickname': data.get('nickname', '小Leo')
             }
         except Exception:
-            return {'idle_bubble_enabled': True, 'idle_timeout': 60}
+            return {'idle_bubble_enabled': True, 'idle_timeout': 60, 'nickname': '小Leo'}
 
     def save_settings(self, settings):
         try:
@@ -234,6 +236,7 @@ Get-StartApps | ForEach-Object {
             data = {}
         data['idle_bubble_enabled'] = settings.get('idle_bubble_enabled', True)
         data['idle_timeout'] = settings.get('idle_timeout', 60)
+        data['nickname'] = settings.get('nickname', '小Leo')
         data['machine_id'] = _get_machine_id()   # 绑定当前设备
         try:
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:

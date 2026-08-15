@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>桌宠管理</title>
 <style id="theme-vars">
 /* ===== 桌宠管理软件 - 设计令牌（复用 design 设计稿）===== */
@@ -70,15 +73,33 @@
   .hidden { display:none !important; }
 </style>
 </head>
-<body class="min-h-screen font-sans antialiased">
+<body class="font-sans antialiased" style="height:720px; overflow:hidden;">
 
 <!-- ============ 主页 ============ -->
-<main id="view-home" class="view active">
+<main id="view-home" class="view active relative" style="height:720px;">
   <!-- 左上角设置按钮 -->
   <button id="btn-settings" class="btn absolute top-4 left-4 w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted z-10">
     <i data-lucide="settings" class="w-5 h-5 text-muted-foreground"></i>
   </button>
-  <div class="flex items-center justify-center min-h-screen p-4">
+  <!-- 顶部昵称展示区：绝对定位在卡片上方空白处居中 -->
+  <div class="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center" id="nickname-bar">
+    <!-- 常态展示 -->
+    <div id="nickname-view" class="flex items-center gap-1">
+      <h2 class="text-base font-bold tracking-tight whitespace-nowrap">Hi，<span id="nickname-display" class="text-[var(--brand-primary)]">小Leo</span>！</h2>
+      <button id="btn-edit-nickname" class="btn w-6 h-6 rounded-full flex items-center justify-center hover:bg-muted shrink-0" title="编辑昵称">
+        <i data-lucide="pencil" class="w-3 h-3 text-muted-foreground"></i>
+      </button>
+    </div>
+    <!-- 编辑态（平时隐藏）：Hi，[输入框]！ -->
+    <div id="nickname-edit" class="hidden items-center whitespace-nowrap">
+      <span class="text-base font-bold tracking-tight">Hi，</span>
+      <input id="nickname-input" type="text" maxlength="10" class="field" style="width:60px; height:28px; padding:0 6px; font-size:16px; font-weight:bold; text-align:center; color:var(--brand-primary); border-color:var(--brand-primary);" value="小Leo" />
+      <span class="text-base font-bold tracking-tight">！</span>
+    </div>
+    <!-- 用于测量文字宽度的隐藏 canvas -->
+    <canvas id="nick-measure" style="display:none;"></canvas>
+  </div>
+  <div class="flex items-center justify-center p-4" style="height:720px;">
     <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] p-6 flex flex-col gap-5" style="box-shadow:var(--shadow-2)">
       <!-- 宠物状态 -->
       <section class="flex flex-col items-center gap-4">
@@ -244,11 +265,78 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;
 async function init(){
   try { await refreshStatus(); } catch(e){}
   try { await loadCommands(); } catch(e){}
+  try { await loadNickname(); } catch(e){}
   lucide.createIcons();
   setInterval(()=>{ refreshStatus().catch(()=>{}); }, 2000);
   // 通知 Python 页面加载完成，显示窗口并关闭 splash
   try { await window.pywebview.api.page_loaded(); } catch(e){}
 }
+
+// ---------- 昵称 ----------
+let curNickname = '小Leo';
+async function loadNickname(){
+  try {
+    const s = await window.pywebview.api.get_settings();
+    curNickname = s.nickname || '小Leo';
+  } catch(e) {}
+  $('nickname-display').textContent = curNickname;
+  $('nickname-input').value = curNickname;
+  resizeNickInput();
+}
+
+// 测量输入框文字宽度，让输入框自适应文字长度
+function resizeNickInput(){
+  const input = $('nickname-input');
+  const canvas = $('nick-measure');
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 16px "Microsoft YaHei UI", "PingFang SC", sans-serif';
+  const text = input.value || '小Leo';
+  const w = ctx.measureText(text).width;
+  // 宽度 = 文字宽度 + 左右padding(12px) + 边框(2px) + 余量(4px)
+  input.style.width = Math.ceil(w) + 18 + 'px';
+}
+
+function enterEditNickname(){
+  $('nickname-view').classList.add('hidden');
+  $('nickname-edit').classList.remove('hidden');
+  $('nickname-edit').classList.add('flex');
+  const input = $('nickname-input');
+  input.value = curNickname;
+  resizeNickInput();
+  input.focus();
+  input.select();
+}
+
+async function saveNickname(){
+  const input = $('nickname-input');
+  let v = input.value.trim();
+  if (!v) v = '小Leo';
+  const changed = v !== curNickname;
+  curNickname = v;
+  if (changed){
+    try {
+      const s = await window.pywebview.api.get_settings();
+      await window.pywebview.api.save_settings({
+        idle_bubble_enabled: s.idle_bubble_enabled !== false,
+        idle_timeout: s.idle_timeout || 60,
+        nickname: v
+      });
+    } catch(e) {}
+  }
+  $('nickname-display').textContent = v;
+  $('nickname-edit').classList.add('hidden');
+  $('nickname-edit').classList.remove('flex');
+  $('nickname-view').classList.remove('hidden');
+  lucide.createIcons();
+}
+
+$('btn-edit-nickname').addEventListener('click', enterEditNickname);
+$('nickname-input').addEventListener('input', resizeNickInput);
+$('nickname-input').addEventListener('blur', saveNickname);
+$('nickname-input').addEventListener('keydown', (e)=>{
+  if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+  if (e.key === 'Escape') { e.target.value = curNickname; e.target.blur(); }
+});
 
 async function refreshStatus(){
   const running = await window.pywebview.api.get_status();
@@ -429,7 +517,8 @@ $('btn-save-settings').addEventListener('click', async () => {
   try {
     await window.pywebview.api.save_settings({
       idle_bubble_enabled: enabled,
-      idle_timeout: timeout
+      idle_timeout: timeout,
+      nickname: curNickname
     });
     // 保存成功反馈
     const btn = $('btn-save-settings');

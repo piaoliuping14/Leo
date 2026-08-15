@@ -85,6 +85,15 @@ def load_idle_timeout():
         return 60
 
 
+def load_nickname():
+    """从 config.json 读取用户昵称；默认'小Leo'。"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f).get('nickname', '小Leo')
+    except Exception:
+        return '小Leo'
+
+
 def _get_machine_id():
     """获取当前 Windows 机器的唯一 ID（MachineGuid）。
     用于设备绑定：区分"本机配置"与"分享/换设备首次打开"。"""
@@ -102,7 +111,7 @@ def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
     - config.json 不存在：不做处理（各读取函数返回默认值）
     - machine_id 缺失：首次运行，写入当前机器 ID
-    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60，更新机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -120,9 +129,10 @@ def _ensure_device_config():
         except Exception:
             pass
     elif cur_mid and saved_mid != cur_mid:
-        # 设备不匹配（分享/换设备）-> 重置 idle_timeout
+        # 设备不匹配（分享/换设备）-> 重置 idle_timeout、nickname
         try:
             data['idle_timeout'] = 60
+            data['nickname'] = '小Leo'
             data['machine_id'] = cur_mid
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -682,9 +692,10 @@ class LionPet:
     KEY = 'magenta'                            # 透明键（已确认图中无此色）
 
     def __init__(self, scale=0.07,
-                 bubble_text='Hello，Fangjizhong，有什么可以帮您的？'):
+                 bubble_text=None):
         self.scale = scale
-        self.bubble_text = bubble_text
+        self.nickname = load_nickname()
+        self.bubble_text = bubble_text or ('Hello，' + self.nickname + '，有什么可以帮您的？')
         if not os.path.exists(IMG_PATH):
             raise FileNotFoundError('找不到图片文件: ' + IMG_PATH)
         src = Image.open(IMG_PATH)
@@ -984,12 +995,13 @@ class LionPet:
         if self.bubble_open:
             self.bubble.tick(dt)
 
-        # 配置热更新：每2秒轮询 config.json，检测开关和间隔是否被管理软件修改
+        # 配置热更新：每2秒轮询 config.json，检测开关、间隔、昵称是否被管理软件修改
         self._config_check_timer += dt
         if self._config_check_timer >= 2.0:
             self._config_check_timer = 0.0
             new_enabled = load_idle_enabled()
             new_timeout = load_idle_timeout()
+            new_nick = load_nickname()
             if new_enabled != self.idle_enabled or new_timeout != self.idle_timeout:
                 self.idle_enabled = new_enabled
                 self.idle_timeout = new_timeout
@@ -999,6 +1011,9 @@ class LionPet:
                 # 开关关闭时，关闭正在显示的闲置气泡
                 if not self.idle_enabled and self.idle_bubble.opened:
                     self.idle_bubble.close()
+            if new_nick != self.nickname:
+                self.nickname = new_nick
+                self.bubble_text = 'Hello，' + self.nickname + '，有什么可以帮您的？'
 
         # 闲置气泡逻辑
         if self.idle_enabled:
