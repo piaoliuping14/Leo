@@ -37,7 +37,9 @@ else:
     RES_DIR = APP_DIR
     EXE_DIR = APP_DIR
 CONFIG_PATH = os.path.join(EXE_DIR, 'config.json')
-CLEAN_EXIT = os.path.join(EXE_DIR, 'lion_clean_exit.txt')
+LOG_DIR = os.path.join(EXE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
 WATCHDOG = os.path.join(APP_DIR, 'lion_watchdog.py')   # 开发模式用
 
 

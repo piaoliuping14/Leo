@@ -20,7 +20,9 @@ else:
     # 独立运行（开发模式）
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
     EXE_DIR = APP_DIR
-MARKER = os.path.join(EXE_DIR, 'lion_clean_exit.txt')
+LOG_DIR = os.path.join(EXE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+MARKER = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
 SCRIPT = os.path.join(APP_DIR, 'lion_desktop.py')
 PY = sys.executable
 
