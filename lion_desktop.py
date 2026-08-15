@@ -17,12 +17,15 @@
 # ============================================================
 import os
 import sys
+import json
 import math
 import logging
 import socket
 import traceback
+import subprocess
 import webbrowser
 import ctypes
+import datetime
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import font as tkfont
@@ -33,6 +36,27 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_PATH = os.path.join(DIR, 'katong', '狮子111-no-bg.png')
 LOG_PATH = os.path.join(DIR, 'lion.log')
 CLEAN_EXIT = os.path.join(DIR, 'lion_clean_exit.txt')
+CONFIG_PATH = os.path.join(DIR, 'config.json')
+
+# ---------- 快捷指令默认配置（config.json 缺失时回退）----------
+DEFAULT_COMMANDS = [
+    {'name': '启动Claude',  'type': 'app', 'target': 'Claude_pzs8sxrjxfjjc!Claude',     'icon': 'sparkles'},
+    {'name': '启动ChatGPT', 'type': 'app', 'target': 'OpenAI.Codex_2p2nqsd0c76g0!App', 'icon': 'message-circle'},
+    {'name': '启动B站',      'type': 'url', 'target': 'https://www.bilibili.com/',       'icon': 'play'},
+]
+
+
+def load_commands():
+    """从 config.json 读取快捷指令；缺失或异常时回退默认列表。"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        cmds = data.get('commands')
+        if cmds:
+            return cmds
+    except Exception:
+        pass
+    return list(DEFAULT_COMMANDS)
 
 # ---------- 日志 ----------
 _log = logging.getLogger('lion')
@@ -108,6 +132,7 @@ def render_frame(base, fw, fh, pad, angle, bob, breath):
 
 # ---------- 对话气泡 ----------
 class BubbleWindow:
+    """可动态切换内容的对话气泡：set_content() 更新文本和按钮后 show() 即可。"""
     TAIL_ALLOW = 14                         # 尾巴预留宽度（整体收入窗口，不被裁切）
     KEY = 'magenta'
     BG       = (252, 252, 254)              # 极浅冷白
@@ -118,17 +143,30 @@ class BubbleWindow:
     BTN_BD   = (204, 214, 233)
     BTN_TX   = (46, 64, 92)
     BTN_TXH  = (26, 86, 170)
-    BTN_TEXTS = ('启动Claude', '启动ChatGPT', '启动B站')
 
-    def __init__(self, parent, text, on_click, on_close):
-        self.text = text
-        self.on_click = on_click
+    def __init__(self, parent, on_close):
         self.on_close = on_close
         self.fade = 0.0
         self.opened = False
         self.bubble_photo = None
         self._cur_tail = None
 
+        # 内容（由 set_content 设置）
+        self.text = ''
+        self.btn_labels = []
+        self.on_button_click = None
+
+        # 字体 & 布局参数
+        self.font_lab = tkfont.Font(family='Microsoft YaHei UI', size=10)
+        self.font_btn = tkfont.Font(family='Microsoft YaHei UI', size=9)
+        self.btn_h = 28
+        self.gap = 8
+        self.pad_lr = 14
+        self.lab_top = 11
+        self.lab_gap = 9
+        self.bot_pad = 11
+
+        # Toplevel
         self.top = tk.Toplevel(parent)
         self.top.overrideredirect(True)
         self.top.attributes('-topmost', True)
@@ -139,42 +177,68 @@ class BubbleWindow:
             pass
         self.top.withdraw()
 
-        self.font_lab = tkfont.Font(family='Microsoft YaHei UI', size=10)
-        self.font_btn = tkfont.Font(family='Microsoft YaHei UI', size=9)
-
-        # 尺寸计算（与 PS 版一致）
-        lab_w = self.font_lab.measure(text)
-        lab_h = self.font_lab.metrics('linespace')
-        max_bw = max(self.font_btn.measure(t) for t in self.BTN_TEXTS)
-        self.btn_w = max_bw + 24
-        self.btn_h = 28
-        self.gap = 8
-        self.pad_lr = 14
-        self.lab_top = 11
-        self.lab_gap = 9
-        self.bot_pad = 11
-        btn_row_w = 3 * self.btn_w + 2 * self.gap
-        self.bw = max(lab_w + 2 * self.pad_lr, btn_row_w + 2 * self.pad_lr)
-        self.bh = self.lab_top + lab_h + self.lab_gap + self.btn_h + self.bot_pad
-        self.btn_y = self.lab_top + lab_h + self.lab_gap
-        self.x0 = (self.bw - btn_row_w) // 2
-
         self.canvas = tk.Canvas(self.top, width=10, height=10,
                                 bg=self.KEY, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.img_item = self.canvas.create_image(0, 0, anchor='nw')
 
-        # 文字标签
-        self.label = tk.Label(self.top, text=text, font=self.font_lab,
+        # 控件（由 _create_widgets 创建）
+        self.label = None
+        self.buttons = []
+        self.btn_frames = []
+        self.close_btn = None
+
+        # 初始化空内容
+        self._calc_layout('', [])
+        self._create_widgets()
+
+    def set_content(self, text, btn_labels, on_button_click):
+        """更新气泡内容：文本、按钮标签列表、按钮点击回调。"""
+        self.text = text
+        self.btn_labels = btn_labels or []
+        self.on_button_click = on_button_click
+
+        # 销毁旧控件
+        if self.label:
+            self.label.destroy()
+        for f in self.btn_frames:
+            f.destroy()
+        if self.close_btn:
+            self.close_btn.destroy()
+        self.buttons = []
+        self.btn_frames = []
+
+        # 重新计算并创建
+        self._calc_layout(text, self.btn_labels)
+        self._create_widgets()
+        self._cur_tail = None               # 强制下次 show/position 时重建
+
+    def _calc_layout(self, text, btn_labels):
+        """根据文本和按钮列表计算气泡尺寸。"""
+        lab_w = self.font_lab.measure(text) + 4              # +4px 防止末尾字符被裁切
+        lab_h = self.font_lab.metrics('linespace')
+        names = btn_labels or []
+        max_bw = max((self.font_btn.measure(n) for n in names), default=0)
+        self.btn_w = max_bw + 24
+        n = len(names)
+        btn_row_w = n * self.btn_w + (n - 1) * self.gap if n > 0 else 0
+        self.bw = max(lab_w + 2 * self.pad_lr, btn_row_w + 2 * self.pad_lr, 160)
+        if n > 0:
+            self.bh = self.lab_top + lab_h + self.lab_gap + self.btn_h + self.bot_pad
+        else:
+            self.bh = self.lab_top + lab_h + 20
+        self.btn_y = self.lab_top + lab_h + self.lab_gap
+        self.x0 = (self.bw - btn_row_w) // 2
+
+    def _create_widgets(self):
+        """根据当前内容创建标签、按钮、关闭按钮。"""
+        self.label = tk.Label(self.top, text=self.text, font=self.font_lab,
                               fg=self._hex(self.TEXT), bg=self._hex(self.BG),
                               relief='flat', bd=0, highlightthickness=0)
 
-        # 三个动作按钮（Frame 包裹做 1px 边框，Button flat 自绘底色）
-        self.buttons = []
-        self.btn_frames = []
-        for i, t in enumerate(self.BTN_TEXTS):
+        for i, label in enumerate(self.btn_labels):
             f = tk.Frame(self.top, bg=self._hex(self.BTN_BD), bd=0)
-            b = tk.Button(f, text=t, font=self.font_btn,
+            b = tk.Button(f, text=label, font=self.font_btn,
                           fg=self._hex(self.BTN_TX), bg=self._hex(self.BTN_BASE),
                           activebackground=self._hex(self.BTN_HOVER),
                           activeforeground=self._hex(self.BTN_TXH),
@@ -187,7 +251,6 @@ class BubbleWindow:
             self.buttons.append(b)
             self.btn_frames.append(f)
 
-        # 关闭按钮（圆形不可行，用矩形 ×，悬停浅红）
         self.close_btn = tk.Button(self.top, text='×',
                                    font=('Microsoft YaHei UI', 9, 'bold'),
                                    fg='#965c5c', bg=self._hex(self.BG),
@@ -286,20 +349,20 @@ class BubbleWindow:
             self.top.withdraw()
         except Exception:
             pass
-
-    def _click(self, idx):
-        try:
-            self.on_click(idx)
-        except Exception as ex:
-            log('btn click error: %s' % ex)
-        self.close()
-
-    def _close(self):
-        self.close()
         try:
             self.on_close()
         except Exception:
             pass
+
+    def _click(self, idx):
+        try:
+            if self.on_button_click:
+                self.on_button_click(idx)
+        except Exception as ex:
+            log('btn click error: %s' % ex)
+
+    def _close(self):
+        self.close()
 
 
 # ---------- 桌宠主体 ----------
@@ -376,9 +439,9 @@ class LionPet:
         self.canvas.bind('<ButtonRelease-1>', self._on_up)
         self.root.bind('<Button-3>', self._on_rclick)
 
-        # 气泡
-        self.bubble = BubbleWindow(self.root, self.bubble_text,
-                                   self._on_btn_click, lambda: None)
+        # 快捷指令 & 气泡
+        self.commands = load_commands()
+        self.bubble = BubbleWindow(self.root, self._on_bubble_closed)
 
         # 右键菜单
         self.menu = tk.Menu(self.root, tearoff=0)
@@ -444,28 +507,90 @@ class LionPet:
         self.menu.tk_popup(e.x_root, e.y_root)
 
     # ---------- 气泡 ----------
+    def _on_bubble_closed(self):
+        """气泡关闭时同步状态（由 × 按钮或按钮回调触发）。"""
+        self.bubble_open = False
+
     def _toggle_bubble(self):
         if self.bubble_open:
             self.bubble.close()
-            self.bubble_open = False
         else:
-            self.bubble_open = True
-            self.hop_t = 0.35                  # 开心一跳
-            self.bubble.show(self.x, self.y, self.fw, self.fh)
+            self._show_main_bubble()
 
-    def _on_btn_click(self, idx):
+    def _show_main_bubble(self):
+        """主气泡：问候语 + 快捷指令 / 天气 / 时间 三按钮。"""
+        self.bubble.set_content(
+            self.bubble_text,
+            ['快捷指令', '天气', '时间'],
+            self._on_main_btn_click)
+        self.bubble_open = True
+        self.hop_t = 0.35                  # 开心一跳
+        self.bubble.show(self.x, self.y, self.fw, self.fh)
+
+    def _on_main_btn_click(self, idx):
+        """主气泡按钮：关闭当前气泡，切换到对应子气泡。"""
+        self.bubble.close()
         if idx == 0:
-            self._launch_app('Claude_pzs8sxrjxfjjc!Claude')
+            self._show_commands_bubble()
         elif idx == 1:
-            self._launch_app('OpenAI.Codex_2p2nqsd0c76g0!App')
+            self._show_weather_bubble()
         elif idx == 2:
+            self._show_time_bubble()
+
+    def _show_commands_bubble(self):
+        """快捷指令子气泡：展示 config.json 中的指令列表。"""
+        cmd_names = [c.get('name', '') for c in self.commands]
+        self.bubble.set_content('小主人，您要打开什么呀？', cmd_names, self._on_cmd_btn_click)
+        self.bubble_open = True
+        self.bubble.show(self.x, self.y, self.fw, self.fh)
+
+    def _on_cmd_btn_click(self, idx):
+        """快捷指令子气泡按钮：关闭气泡并执行对应指令。"""
+        self.bubble.close()
+        self._execute_command(idx)
+
+    def _show_weather_bubble(self):
+        """天气子气泡：显示天气信息（暂为占位，后续可接入 API）。"""
+        self.bubble.set_content('天气服务暂未接入，敬请期待', [], None)
+        self.bubble_open = True
+        self.bubble.show(self.x, self.y, self.fw, self.fh)
+
+    def _show_time_bubble(self):
+        """时间子气泡：显示当前日期和时间。"""
+        now = datetime.datetime.now()
+        weekday = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][now.weekday()]
+        time_str = now.strftime('%Y年%m月%d日 %H:%M') + ' ' + weekday
+        self.bubble.set_content(time_str, [], None)
+        self.bubble_open = True
+        self.bubble.show(self.x, self.y, self.fw, self.fh)
+
+    def _execute_command(self, idx):
+        """执行快捷指令（app/url/file 三种类型）。"""
+        if idx < 0 or idx >= len(self.commands):
+            return
+        cmd = self.commands[idx]
+        t = cmd.get('type', '')
+        target = cmd.get('target', '')
+        if t == 'app':                        # MSIX 应用（AUMID）
+            self._launch_app(target)
+        elif t == 'url':                      # 网址
             try:
-                webbrowser.open('https://www.bilibili.com/')
+                webbrowser.open(target)
             except Exception as ex:
-                log('open bilibili failed: %s' % ex)
+                log('open url failed: %s' % ex)
+        elif t == 'file':                     # 本地文件 / 程序
+            try:
+                os.startfile(target)
+            except Exception:
+                try:
+                    subprocess.Popen([target])
+                except Exception as ex:
+                    log('open file failed: %s' % ex)
 
     @staticmethod
     def _launch_app(aumid):
+        if not aumid:
+            return
         try:
             ctypes.windll.shell32.ShellExecuteW(
                 None, 'open', 'shell:AppsFolder\\' + aumid, None, None, 1)
@@ -538,13 +663,11 @@ class LionPet:
         for _ in range(8):
             self._step(0.033)
             self.root.update()
-        self.bubble_open = True
-        self.bubble.show(self.x, self.y, self.fw, self.fh)
+        self._show_main_bubble()
         for _ in range(6):
             self._step(0.033)
             self.root.update()
         self.bubble.close()
-        self.bubble_open = False
         self._quit()
         print('TEST OK')
 
@@ -571,7 +694,8 @@ def main():
                 scale = float(a.split('=', 1)[1])
             except Exception:
                 pass
-    if acquire_lock() is None:                 # 已有实例在跑 -> 退出
+    _lock = acquire_lock()                     # 必须持有引用，否则 socket 被 GC 后端口关闭
+    if _lock is None:                          # 已有实例在跑 -> 退出
         sys.exit(0)
     try:
         pet = LionPet(scale=scale)

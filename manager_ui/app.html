@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>桌宠管理</title>
+<style id="theme-vars">
+/* ===== 桌宠管理软件 - 设计令牌（复用 design 设计稿）===== */
+/* Brand: 暖橙琥珀 — 呼应狮子形象，温暖有陪伴感 */
+:root {
+  --brand-background: #faf8f5;
+  --brand-foreground: #2d2420;
+  --brand-card: #ffffff;
+  --brand-card-foreground: #2d2420;
+  --brand-primary: #e8843c;
+  --brand-primary-foreground: #ffffff;
+  --brand-muted: #f5f0ea;
+  --brand-muted-foreground: #8c7b6e;
+  --brand-border: #e8e0d6;
+  --brand-input: #e8e0d6;
+  --brand-ring: #e8843c;
+  --brand-radius-sm: 4px;
+  --brand-radius-md: 10px;
+  --brand-radius-lg: 16px;
+  --state-success: #4caf7d;
+  --state-warning: #f0a040;
+  --state-error: #e05555;
+  --state-info: #5b9bd5;
+  --shadow-1: 0 1px 3px rgba(45,36,32,0.04), 0 1px 2px rgba(45,36,32,0.03);
+  --shadow-2: 0 8px 24px -8px rgba(45,36,32,0.12);
+  --font-sans: "Inter","PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+<script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+@theme inline {
+  --color-background: var(--brand-background);
+  --color-foreground: var(--brand-foreground);
+  --color-card: var(--brand-card);
+  --color-card-foreground: var(--brand-card-foreground);
+  --color-primary: var(--brand-primary);
+  --color-primary-foreground: var(--brand-primary-foreground);
+  --color-muted: var(--brand-muted);
+  --color-muted-foreground: var(--brand-muted-foreground);
+  --color-border: var(--brand-border);
+  --color-input: var(--brand-input);
+  --color-ring: var(--brand-ring);
+  --radius-sm: var(--brand-radius-sm);
+  --radius-md: var(--brand-radius-md);
+  --radius-lg: var(--brand-radius-lg);
+}
+@layer base { body { background: var(--brand-background); color: var(--brand-foreground); } }
+</style>
+<style>
+  .view { display: none; }
+  .view.active { display: block; }
+  .btn { transition: all .15s; cursor: pointer; }
+  .btn-primary { background: var(--brand-primary); color: #fff; }
+  .btn-primary:hover { opacity: .9; }
+  .btn-ghost { background: transparent; border: 1px solid var(--brand-border); color: var(--brand-foreground); }
+  .btn-ghost:hover { background: var(--brand-muted); }
+  .cmd-item { transition: border-color .15s; }
+  .cmd-item:hover { border-color: rgba(232,132,60,.4); }
+  .cmd-del { opacity: 0; transition: all .15s; }
+  .cmd-item:hover .cmd-del { opacity: 1; }
+  .field { width:100%; height:36px; border:1px solid var(--brand-border); border-radius: var(--brand-radius-sm); background:#fff; padding:0 12px; font-size:14px; color: var(--brand-foreground); outline:none; }
+  .field:focus { border-color: var(--brand-primary); }
+  select.field { appearance:none; cursor:pointer; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body class="min-h-screen font-sans antialiased">
+
+<!-- ============ 主页 ============ -->
+<main id="view-home" class="view active">
+  <div class="flex items-center justify-center min-h-screen p-4">
+    <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] p-6 flex flex-col gap-5" style="box-shadow:var(--shadow-2)">
+      <!-- 宠物状态 -->
+      <section class="flex flex-col items-center gap-4">
+        <div class="w-28 h-28 rounded-[var(--brand-radius-lg)] overflow-hidden bg-muted flex items-center justify-center" style="box-shadow:var(--shadow-1)">
+          <img src="assets/lion-pet.png" alt="桌面宠物狮子" class="w-24 h-24 object-contain" />
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="status-dot" class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: var(--brand-muted-foreground);"></span>
+          <span id="status-text" class="text-muted-foreground text-sm">狮子未启动</span>
+        </div>
+      </section>
+
+      <!-- 控制按钮 -->
+      <section class="flex flex-col gap-3">
+        <button id="btn-start" class="btn btn-primary w-full py-3 rounded-[var(--brand-radius-md)] font-semibold text-base flex items-center justify-center gap-2" style="box-shadow:var(--shadow-1)">
+          <i data-lucide="play" class="w-5 h-5"></i><span>启动宠物</span>
+        </button>
+        <button id="btn-commands" class="btn btn-ghost w-full py-3 rounded-[var(--brand-radius-md)] font-medium text-base flex items-center justify-center gap-2">
+          <i data-lucide="list" class="w-5 h-5"></i><span>快捷指令配置</span>
+        </button>
+      </section>
+
+      <!-- 提示 -->
+      <div class="bg-muted rounded-[var(--brand-radius-md)] p-3 flex items-start gap-2">
+        <i data-lucide="info" class="w-4 h-4 text-muted-foreground shrink-0 mt-0.5"></i>
+        <p class="text-muted-foreground text-xs leading-relaxed">提示：单击宠物弹出对话气泡（快捷指令/天气/时间）；右键宠物可回到右下角或退出。关闭本窗口不影响桌宠运行。</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 快捷指令配置 ============ -->
+<main id="view-commands" class="view">
+  <div class="max-w-[400px] mx-auto px-4 py-6 flex flex-col gap-5">
+    <!-- Header -->
+    <div class="flex items-center gap-3">
+      <button id="btn-back" class="btn w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted shrink-0">
+        <i data-lucide="chevron-left" class="w-5 h-5"></i>
+      </button>
+      <div class="flex-1">
+        <h1 class="text-xl font-bold tracking-tight">快捷指令</h1>
+        <p class="text-sm text-muted-foreground mt-0.5">配置宠物点击后打开的软件、网站或文件</p>
+      </div>
+    </div>
+
+    <!-- 指令列表 -->
+    <div id="command-list" class="flex flex-col gap-2"></div>
+
+    <!-- 添加按钮 -->
+    <button id="btn-add" class="btn flex items-center justify-center gap-2 border-2 border-dashed border-border rounded-[var(--brand-radius-md)] px-4 py-4 hover:border-primary hover:bg-primary/[0.04]">
+      <div class="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><i data-lucide="plus" class="w-4 h-4"></i></div>
+      <span class="text-sm font-medium text-muted-foreground">添加快捷指令</span>
+    </button>
+
+    <!-- 编辑表单 -->
+    <div id="form-card" class="hidden bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex flex-col gap-3" style="box-shadow:var(--shadow-1)">
+      <h3 id="form-title" class="text-sm font-semibold">新增指令</h3>
+      <button id="btn-pick-app" type="button" class="btn flex items-center justify-center gap-2 bg-muted hover:bg-primary/[0.06] rounded-[var(--brand-radius-sm)] py-2 text-sm font-medium text-muted-foreground">
+        <i data-lucide="search" class="w-4 h-4"></i><span>从已安装应用选择</span>
+      </button>
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-muted-foreground">指令名称</label>
+        <input id="f-name" class="field" placeholder="例如：打开浏览器" />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-muted-foreground">类型</label>
+        <select id="f-type" class="field">
+          <option value="url">网址</option>
+          <option value="app">应用 (AUMID)</option>
+          <option value="file">本地文件 / 程序</option>
+        </select>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-muted-foreground">目标路径 / 网址 / AUMID</label>
+        <input id="f-target" class="field" placeholder="https://www.google.com" />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label class="text-xs font-medium text-muted-foreground">图标</label>
+        <select id="f-icon" class="field">
+          <option value="globe">🌐 网页</option>
+          <option value="file-text">📄 文档</option>
+          <option value="folder">📁 文件夹</option>
+          <option value="monitor">🖥️ 应用</option>
+          <option value="play">▶️ 播放</option>
+          <option value="sparkles">✨ 闪光</option>
+          <option value="message-circle">💬 对话</option>
+          <option value="terminal">⌘ 终端</option>
+          <option value="music">🎵 音乐</option>
+          <option value="image">🖼️ 图片</option>
+        </select>
+      </div>
+      <div class="flex gap-2 mt-1">
+        <button id="btn-cancel" class="btn btn-ghost flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">取消</button>
+        <button id="btn-save" class="btn btn-primary flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">保存</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 应用选择浮层 ============ -->
+<div id="app-picker" class="hidden fixed inset-0 z-50 flex items-end justify-center p-4" style="background:rgba(45,36,32,0.4)">
+  <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] flex flex-col" style="box-shadow:var(--shadow-2); max-height:80vh">
+    <div class="flex items-center gap-2 p-3 border-b border-border">
+      <i data-lucide="search" class="w-4 h-4 text-muted-foreground shrink-0"></i>
+      <input id="picker-search" class="flex-1 outline-none bg-transparent text-sm" placeholder="搜索应用名称..." />
+      <button id="picker-close" type="button" class="text-muted-foreground hover:text-foreground shrink-0"><i data-lucide="x" class="w-5 h-5"></i></button>
+    </div>
+    <div id="picker-list" class="overflow-y-auto flex-1 p-2 flex flex-col gap-0.5"></div>
+  </div>
+</div>
+
+<script>
+let commands = [];
+let editingIndex = -1;
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function init(){
+  try { await refreshStatus(); } catch(e){}
+  try { await loadCommands(); } catch(e){}
+  lucide.createIcons();
+  setInterval(()=>{ refreshStatus().catch(()=>{}); }, 2000);
+}
+
+async function refreshStatus(){
+  const running = await window.pywebview.api.get_status();
+  const dot = $('status-dot'), txt = $('status-text');
+  if (running){
+    dot.style.backgroundColor = 'var(--state-success)';
+    txt.textContent = '狮子运行中';
+  } else {
+    dot.style.backgroundColor = 'var(--brand-muted-foreground)';
+    txt.textContent = '狮子未启动';
+  }
+}
+
+async function loadCommands(){
+  commands = await window.pywebview.api.get_commands();
+  renderCommands();
+}
+
+function renderCommands(){
+  const list = $('command-list');
+  list.innerHTML = '';
+  if (!commands.length){
+    list.innerHTML = '<p class="text-center text-sm text-muted-foreground py-6">还没有快捷指令，点击下方添加</p>';
+    lucide.createIcons();
+    return;
+  }
+  commands.forEach((cmd, i) => {
+    const div = document.createElement('div');
+    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-pointer';
+    div.style.boxShadow = 'var(--shadow-1)';
+    div.innerHTML = `
+      <div class="w-9 h-9 rounded-[var(--brand-radius-sm)] bg-muted flex items-center justify-center shrink-0">
+        <i data-lucide="${esc(cmd.icon||'app')}" class="w-5 h-5" style="color:var(--brand-primary)"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium leading-tight">${esc(cmd.name)}</p>
+        <p class="text-xs text-muted-foreground truncate mt-0.5">${esc(cmd.target)}</p>
+      </div>
+      <button class="cmd-del w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-[var(--state-error)]/10" style="color:var(--state-error)" title="删除">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>`;
+    div.querySelector('.cmd-del').addEventListener('click', (e)=>{ e.stopPropagation(); deleteCommand(i); });
+    div.addEventListener('click', ()=> editCommand(i));
+    list.appendChild(div);
+  });
+  lucide.createIcons();
+}
+
+function showView(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  $(id).classList.add('active');
+  lucide.createIcons();
+}
+
+function showForm(){
+  $('form-card').classList.remove('hidden');
+  $('form-title').textContent = editingIndex >= 0 ? '编辑指令' : '新增指令';
+}
+function hideForm(){ $('form-card').classList.add('hidden'); }
+
+function addCommand(){
+  editingIndex = -1;
+  $('f-name').value = '';
+  $('f-type').value = 'url';
+  $('f-target').value = '';
+  $('f-icon').value = 'globe';
+  showForm();
+}
+
+function editCommand(i){
+  editingIndex = i;
+  const c = commands[i] || {};
+  $('f-name').value = c.name || '';
+  $('f-type').value = c.type || 'url';
+  $('f-target').value = c.target || '';
+  $('f-icon').value = c.icon || 'globe';
+  showForm();
+}
+
+async function saveCommand(){
+  const cmd = {
+    name: $('f-name').value.trim(),
+    type: $('f-type').value,
+    target: $('f-target').value.trim(),
+    icon: $('f-icon').value
+  };
+  if (!cmd.name || !cmd.target){ alert('请填写名称和目标'); return; }
+  if (editingIndex >= 0) commands[editingIndex] = cmd;
+  else commands.push(cmd);
+  await window.pywebview.api.save_commands(commands);
+  hideForm();
+  renderCommands();
+}
+
+async function deleteCommand(i){
+  commands.splice(i, 1);
+  await window.pywebview.api.save_commands(commands);
+  renderCommands();
+}
+
+async function startPet(){
+  await window.pywebview.api.start_pet();
+  setTimeout(()=>refreshStatus().catch(()=>{}), 1500);
+}
+
+$('btn-start').addEventListener('click', startPet);
+$('btn-commands').addEventListener('click', ()=>{ showView('view-commands'); });
+$('btn-back').addEventListener('click', ()=>{ showView('view-home'); });
+$('btn-add').addEventListener('click', addCommand);
+$('btn-cancel').addEventListener('click', hideForm);
+$('btn-save').addEventListener('click', saveCommand);
+
+// ---------- 应用选择浮层 ----------
+let allApps = [];
+function openPicker(){
+  $('app-picker').classList.remove('hidden');
+  $('picker-search').value = '';
+  $('picker-list').innerHTML = '<p class="text-center text-sm text-muted-foreground py-6">加载中...</p>';
+  lucide.createIcons();
+  if (!allApps.length){
+    window.pywebview.api.list_apps().then(apps => {
+      allApps = apps || [];
+      allApps.forEach((a,i) => a._idx = i);
+      renderPicker('');
+    }).catch(() => {
+      $('picker-list').innerHTML = '<p class="text-center text-sm text-muted-foreground py-6">加载失败</p>';
+    });
+  } else {
+    renderPicker('');
+  }
+  setTimeout(() => $('picker-search').focus(), 50);
+}
+function closePicker(){ $('app-picker').classList.add('hidden'); }
+function renderPicker(q){
+  q = (q || '').trim().toLowerCase();
+  const list = $('picker-list');
+  const filtered = q ? allApps.filter(a => (a.name || '').toLowerCase().includes(q)) : allApps;
+  if (!filtered.length){
+    list.innerHTML = '<p class="text-center text-sm text-muted-foreground py-6">未找到匹配应用</p>';
+    lucide.createIcons();
+    return;
+  }
+  list.innerHTML = filtered.slice(0, 200).map(a => {
+    const tag = a.type === 'app' ? '应用' : '程序';
+    return `<div class="picker-item flex items-center gap-3 px-3 py-2 rounded-[var(--brand-radius-sm)] hover:bg-muted cursor-pointer" data-idx="${a._idx}">
+      <div class="w-8 h-8 rounded-[var(--brand-radius-sm)] bg-muted flex items-center justify-center shrink-0">
+        <i data-lucide="app-window" class="w-4 h-4" style="color:var(--brand-primary)"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium leading-tight truncate">${esc(a.name)}</p>
+        <p class="text-xs text-muted-foreground truncate">${esc(a.target)}</p>
+      </div>
+      <span class="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">${tag}</span>
+    </div>`;
+  }).join('');
+  lucide.createIcons();
+  list.querySelectorAll('.picker-item').forEach(el => {
+    el.addEventListener('click', () => pickApp(parseInt(el.dataset.idx)));
+  });
+}
+function pickApp(idx){
+  const a = allApps[idx];
+  if (!a) return;
+  $('f-name').value = a.name;
+  $('f-type').value = a.type;
+  $('f-target').value = a.target;
+  $('f-icon').value = 'monitor';
+  closePicker();
+  lucide.createIcons();
+}
+$('btn-pick-app').addEventListener('click', openPicker);
+$('picker-close').addEventListener('click', closePicker);
+$('picker-search').addEventListener('input', e => renderPicker(e.target.value));
+$('app-picker').addEventListener('click', e => { if (e.target === $('app-picker')) closePicker(); });
+
+window.addEventListener('pywebviewready', init);
+</script>
+</body>
+</html>

@@ -3,9 +3,9 @@ lion_clean_exit.txt
 lion.log
 *.log
 
-# Backups produced by process_lion.ps1
 katong/
 
 # IDE / editor local config
 .claude/
 
+design/
