@@ -5,6 +5,13 @@ lion.log
 
 katong/
 
+# Python 编译缓存
+__pycache__/
+*.pyc
+
+# 用户配置（首次运行自动生成，含设备绑定信息）
+config.json
+
 # IDE / editor local config
 .claude/
 
