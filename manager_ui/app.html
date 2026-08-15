@@ -79,7 +79,7 @@
       <!-- 宠物状态 -->
       <section class="flex flex-col items-center gap-4">
         <div class="w-28 h-28 rounded-[var(--brand-radius-lg)] overflow-hidden bg-muted flex items-center justify-center" style="box-shadow:var(--shadow-1)">
-          <img src="assets/lion-pet.png" alt="桌面宠物狮子" class="w-24 h-24 object-contain" />
+          <img src="assets/lion-pet.png" alt="桌面宠物狮子" class="w-24 h-24 object-contain" style="margin-left:4px" />
         </div>
         <div class="flex items-center gap-2">
           <span id="status-dot" class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: var(--brand-muted-foreground);"></span>
@@ -199,6 +199,8 @@ async function init(){
   try { await loadCommands(); } catch(e){}
   lucide.createIcons();
   setInterval(()=>{ refreshStatus().catch(()=>{}); }, 2000);
+  // 通知 Python 页面加载完成，显示窗口并关闭 splash
+  try { await window.pywebview.api.page_loaded(); } catch(e){}
 }
 
 async function refreshStatus(){

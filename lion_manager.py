@@ -17,7 +17,11 @@ import json
 import time
 import socket
 import struct
+import ctypes
 import subprocess
+import threading
+import tkinter as tk
+from PIL import Image, ImageTk
 
 import webview
 
@@ -37,6 +41,18 @@ class ManagerApi:
 
     def __init__(self):
         self._window = None
+        self._shown = False
+        self._stop_splash = None        # 由 main() 注入
+
+    def page_loaded(self):
+        """前端 init() 完成后调用：显示 webview 窗口并关闭 splash。"""
+        if self._shown:
+            return
+        self._shown = True
+        if self._window:
+            self._window.show()
+        if self._stop_splash:
+            self._stop_splash.set()
 
     # ---------- 宠物状态 ----------
     def get_status(self):
@@ -166,7 +182,96 @@ Get-StartApps | ForEach-Object {
             pass
 
 
+def show_splash(stop_event):
+    """原生 tkinter 启动加载页，与 webview 窗口同尺寸同位置，完全覆盖黑屏。"""
+    W, H = 440, 720                       # 与 webview 窗口一致
+    sw = ctypes.windll.user32.GetSystemMetrics(0)
+    sh = ctypes.windll.user32.GetSystemMetrics(1)
+    x, y = (sw - W) // 2, (sh - H) // 2
+
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes('-topmost', True)
+    root.config(bg='#faf8f5')
+    root.geometry('%dx%d+%d+%d' % (W, H, x, y))
+
+    # 狮子图片
+    photo = None
+    try:
+        img = Image.open(os.path.join(DIR, 'manager_ui', 'assets', 'lion-pet.png'))
+        img = img.resize((100, 100), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+    except Exception:
+        pass
+
+    frame = tk.Frame(root, bg='#faf8f5')
+    frame.pack(expand=True, fill='both')
+
+    if photo:
+        tk.Label(frame, image=photo, bg='#faf8f5').pack(pady=(120, 12))
+    tk.Label(frame, text='桌面宠物', font=('Microsoft YaHei UI', 18, 'bold'),
+             fg='#2d2420', bg='#faf8f5').pack(pady=(0, 32))
+
+    # 旋转 spinner
+    canvas = tk.Canvas(frame, width=36, height=36, bg='#faf8f5',
+                       highlightthickness=0)
+    canvas.pack(pady=(0, 8))
+
+    status_var = tk.StringVar(value='狮子正在赶来陪你')
+    tk.Label(frame, textvariable=status_var,
+             font=('Microsoft YaHei UI', 10),
+             fg='#8c7b6e', bg='#faf8f5').pack()
+
+    # spinner 动画
+    ang = [0]
+    def spin():
+        canvas.delete('all')
+        canvas.create_oval(4, 4, 32, 32, outline='#f5f0ea', width=3)
+        canvas.create_arc(4, 4, 32, 32, start=ang[0], extent=90,
+                          style='arc', outline='#e8843c', width=3)
+        ang[0] = (ang[0] + 12) % 360
+        if not stop_event.is_set():
+            root.after(30, spin)
+    root.after(30, spin)
+
+    # 状态文字动画
+    dots = [0]
+    def animate_dots():
+        dots[0] = (dots[0] + 1) % 4
+        status_var.set('狮子正在赶来陪你' + '.' * dots[0])
+        if not stop_event.is_set():
+            root.after(500, animate_dots)
+    root.after(500, animate_dots)
+
+    # 检查停止信号
+    def check_stop():
+        if stop_event.is_set():
+            root.quit()
+        else:
+            root.after(100, check_stop)
+    root.after(100, check_stop)
+
+    # 兜底：5 秒后强制关闭
+    root.after(5000, root.quit)
+
+    root.mainloop()
+    # mainloop 退出后在同线程销毁，避免跨线程 GC 报错
+    try:
+        root.destroy()
+    except Exception:
+        pass
+
+
 def main():
+    # DPI 感知：确保 tkinter splash 和 webview 窗口使用相同坐标系统
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
     # 管理软件单实例锁：重复启动直接退出
     lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -178,12 +283,28 @@ def main():
     if not os.path.exists(HTML):
         raise FileNotFoundError('找不到管理界面: ' + HTML)
 
+    # 启动 splash（独立线程，与 webview 同尺寸同位置，完全覆盖）
+    stop_splash = threading.Event()
+    threading.Thread(target=show_splash, args=(stop_splash,),
+                     daemon=True).start()
+
     api = ManagerApi()
+    api._stop_splash = stop_splash
     window = webview.create_window(
         '桌宠管理', HTML, js_api=api,
-        width=440, height=720, resizable=False, min_size=(420, 600))
+        width=440, height=720, resizable=False, min_size=(420, 600),
+        background_color='#faf8f5', hidden=True)
     api._window = window
-    webview.start()
+
+    # 兜底：若 page_loaded() 3 秒内未触发，强制显示窗口并关闭 splash
+    def on_ready():
+        time.sleep(3)
+        if not api._shown:
+            api._shown = True
+            window.show()
+            time.sleep(0.2)
+            stop_splash.set()
+    webview.start(func=on_ready)
 
 
 if __name__ == '__main__':
