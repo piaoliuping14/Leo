@@ -1,5 +1,6 @@
 # 桌面狮子桌宠 Python 版依赖
 Pillow>=8.2.0
+pywebview>=5.0
 
 # tkinter 随 Python 标准库自带（Windows 官方安装包已包含），无需 pip 安装。
 # 若缺失（少见），可用官方安装包修复，或 Linux 下执行：sudo apt install python3-tk
