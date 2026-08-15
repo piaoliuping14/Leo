@@ -30,6 +30,49 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(DIR, 'config.json')
 WATCHDOG = os.path.join(DIR, 'lion_watchdog.py')
 CLEAN_EXIT = os.path.join(DIR, 'lion_clean_exit.txt')
+
+
+def _get_machine_id():
+    """获取当前 Windows 机器的唯一 ID（MachineGuid）。
+    用于设备绑定：区分"本机配置"与"分享/换设备首次打开"。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r'SOFTWARE\Microsoft\Cryptography') as key:
+            guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
+        return guid
+    except Exception:
+        return ''
+
+
+def _ensure_device_config():
+    """确保 config.json 中的设备相关配置与当前设备绑定。
+    - config.json 不存在：不做处理
+    - machine_id 缺失：首次运行，写入当前机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60，更新机器 ID
+    - machine_id 匹配：正常使用，不做处理"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return
+    cur_mid = _get_machine_id()
+    saved_mid = data.get('machine_id', '')
+    if not saved_mid:
+        try:
+            data['machine_id'] = cur_mid
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    elif cur_mid and saved_mid != cur_mid:
+        try:
+            data['idle_timeout'] = 60
+            data['machine_id'] = cur_mid
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 HTML = os.path.join(DIR, 'manager_ui', 'app.html')
 PYW = sys.executable                 # bat 用 pythonw 启动，故为 pythonw.exe
 PET_PORT = 52718                     # 桌宠单实例锁端口（lion_desktop.py）
@@ -172,6 +215,7 @@ Get-StartApps | ForEach-Object {
 
     # ---------- 设置 ----------
     def get_settings(self):
+        _ensure_device_config()            # 设备绑定校验（分享/换设备时重置间隔）
         try:
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -190,6 +234,7 @@ Get-StartApps | ForEach-Object {
             data = {}
         data['idle_bubble_enabled'] = settings.get('idle_bubble_enabled', True)
         data['idle_timeout'] = settings.get('idle_timeout', 60)
+        data['machine_id'] = _get_machine_id()   # 绑定当前设备
         try:
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

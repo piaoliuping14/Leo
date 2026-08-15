@@ -85,6 +85,51 @@ def load_idle_timeout():
         return 60
 
 
+def _get_machine_id():
+    """获取当前 Windows 机器的唯一 ID（MachineGuid）。
+    用于设备绑定：区分"本机配置"与"分享/换设备首次打开"。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r'SOFTWARE\Microsoft\Cryptography') as key:
+            guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
+        return guid
+    except Exception:
+        return ''
+
+
+def _ensure_device_config():
+    """确保 config.json 中的设备相关配置与当前设备绑定。
+    - config.json 不存在：不做处理（各读取函数返回默认值）
+    - machine_id 缺失：首次运行，写入当前机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60，更新机器 ID
+    - machine_id 匹配：正常使用，不做处理"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return
+    cur_mid = _get_machine_id()
+    saved_mid = data.get('machine_id', '')
+    if not saved_mid:
+        # 首次运行 -> 绑定设备
+        try:
+            data['machine_id'] = cur_mid
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    elif cur_mid and saved_mid != cur_mid:
+        # 设备不匹配（分享/换设备）-> 重置 idle_timeout
+        try:
+            data['idle_timeout'] = 60
+            data['machine_id'] = cur_mid
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+
 def load_quotes():
     """从文案.txt 读取文案列表；每行一条，去除序号前缀（支持1-3位数）。"""
     import re
@@ -676,6 +721,7 @@ class LionPet:
         self.bubble_open = False
 
         # 闲置气泡状态
+        _ensure_device_config()            # 设备绑定校验（分享/换设备时重置间隔）
         self.idle_enabled = load_idle_enabled()
         self.idle_timeout = load_idle_timeout()
         self.idle_timer = 0.0

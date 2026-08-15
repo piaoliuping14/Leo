@@ -32,5 +32,6 @@
     }
   ],
   "idle_bubble_enabled": true,
-  "idle_timeout": 5
+  "idle_timeout": 50,
+  "machine_id": "1594b604-4a56-40ba-870c-bd6a28c870e3"
 }
