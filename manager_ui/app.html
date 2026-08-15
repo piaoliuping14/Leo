@@ -116,7 +116,11 @@
       </button>
       <div class="flex-1">
         <h1 class="text-xl font-bold tracking-tight">快捷指令</h1>
+<<<<<<< HEAD
         <p class="text-sm text-muted-foreground mt-0.5">拖拽排序 · 点击编辑 · 气泡按三列网格展示</p>
+=======
+        <p class="text-sm text-muted-foreground mt-0.5">配置宠物点击后打开的软件、网站或文件</p>
+>>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
       </div>
     </div>
 
@@ -189,7 +193,10 @@
 <script>
 let commands = [];
 let editingIndex = -1;
+<<<<<<< HEAD
 let dragSrcIdx = null;
+=======
+>>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -228,6 +235,7 @@ function renderCommands(){
   }
   commands.forEach((cmd, i) => {
     const div = document.createElement('div');
+<<<<<<< HEAD
     div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-grab';
     div.style.boxShadow = 'var(--shadow-1)';
     div.draggable = true;
@@ -236,6 +244,11 @@ function renderCommands(){
       <div class="shrink-0 text-muted-foreground/30">
         <i data-lucide="grip-vertical" class="w-4 h-4"></i>
       </div>
+=======
+    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-pointer';
+    div.style.boxShadow = 'var(--shadow-1)';
+    div.innerHTML = `
+>>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
       <div class="w-9 h-9 rounded-[var(--brand-radius-sm)] bg-muted flex items-center justify-center shrink-0">
         <i data-lucide="${esc(cmd.icon||'app')}" class="w-5 h-5" style="color:var(--brand-primary)"></i>
       </div>
@@ -246,6 +259,7 @@ function renderCommands(){
       <button class="cmd-del w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-[var(--state-error)]/10" style="color:var(--state-error)" title="删除">
         <i data-lucide="x" class="w-4 h-4"></i>
       </button>`;
+<<<<<<< HEAD
 
     // 拖拽排序
     div.addEventListener('dragstart', (e) => {
@@ -286,6 +300,8 @@ function renderCommands(){
       }
     });
 
+=======
+>>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
     div.querySelector('.cmd-del').addEventListener('click', (e)=>{ e.stopPropagation(); deleteCommand(i); });
     div.addEventListener('click', ()=> editCommand(i));
     list.appendChild(div);

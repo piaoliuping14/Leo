@@ -142,6 +142,14 @@ Get-StartApps | ForEach-Object {
                           ensure_ascii=False, indent=2)
         except Exception:
             return False
+<<<<<<< HEAD
+=======
+        # 桌宠在跑则重启，使新配置即时生效
+        if self.get_status():
+            self.stop_pet()
+            time.sleep(1)
+            self.start_pet()
+>>>>>>> 71d06d2de440517dd41595e1887e7bb713234757
         return True
 
     # ---------- 进程清理 ----------
