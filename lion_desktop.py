@@ -720,7 +720,7 @@ def acquire_lock(port=52718):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(('127.0.0.1', port))
-        s.listen(1)
+        s.listen(5)                        # backlog 留余量，避免状态检测连接被拒
         return s
     except OSError:
         return None

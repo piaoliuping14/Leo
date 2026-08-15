@@ -16,6 +16,7 @@ import sys
 import json
 import time
 import socket
+import struct
 import subprocess
 
 import webview
@@ -39,9 +40,13 @@ class ManagerApi:
 
     # ---------- 宠物状态 ----------
     def get_status(self):
-        """桌宠是否在运行：尝试连接其单实例锁端口。"""
+        """桌宠是否在运行：尝试连接其单实例锁端口。
+        用 SO_LINGER(0) 发 RST 而非 FIN，避免连接堆积在宠物的
+        accept 队列中导致后续检测失败。"""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.3)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                     struct.pack('ii', 1, 0))
         try:
             s.connect(('127.0.0.1', PET_PORT))
             s.close()
