@@ -12,10 +12,17 @@ import time
 import socket
 import subprocess
 
-DIR = os.path.dirname(os.path.abspath(__file__))
-MARKER = os.path.join(DIR, 'lion_clean_exit.txt')
-SCRIPT = os.path.join(DIR, 'lion_desktop.py')
-PY = sys.executable          # bat 用 pythonw 启动本脚本，故此处为 pythonw.exe
+if getattr(sys, 'frozen', False):
+    # 被启动器调用：用户文件放 exe 目录，核心代码在 app/ 目录
+    EXE_DIR = os.path.dirname(sys.executable)
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+else:
+    # 独立运行（开发模式）
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    EXE_DIR = APP_DIR
+MARKER = os.path.join(EXE_DIR, 'lion_clean_exit.txt')
+SCRIPT = os.path.join(APP_DIR, 'lion_desktop.py')
+PY = sys.executable
 
 
 def main():
@@ -33,7 +40,13 @@ def main():
         pass
 
     while True:
-        p = subprocess.Popen([PY, SCRIPT])
+        if getattr(sys, 'frozen', False):
+            # 被启动器调用：用启动器 exe + --run 参数启动子进程
+            p = subprocess.Popen([sys.executable, '--run', 'lion_desktop'],
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            p = subprocess.Popen([PY, SCRIPT],
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
         p.wait()
         if os.path.exists(MARKER):           # 用户主动退出 -> 不再重启
             try:

@@ -4,7 +4,7 @@
 #  桌宠管理软件 (Python 版)
 #  - 管理主页：启动宠物 / 显示宠物运行状态
 #  - 快捷指令配置：增删改查，保存到 config.json（桌宠读取）
-#  - 关闭窗口（×）仅退出管理软件，桌宠继续运行（右键桌宠可退出）
+#  - 关闭窗口（×）同时退出桌宠
 #  基于 pywebview + HTML，复用 design/pet-manager.design 的 UI 设计稿。
 #
 #  用法:
@@ -26,10 +26,19 @@ from PIL import Image, ImageTk
 import webview
 
 # ---------- 路径 ----------
-DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(DIR, 'config.json')
-WATCHDOG = os.path.join(DIR, 'lion_watchdog.py')
-CLEAN_EXIT = os.path.join(DIR, 'lion_clean_exit.txt')
+if getattr(sys, 'frozen', False):
+    # 被启动器调用：用户文件放 exe 目录，资源放核心代码目录（app/）
+    EXE_DIR = os.path.dirname(sys.executable)
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+else:
+    # 独立运行（开发模式）
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+    EXE_DIR = APP_DIR
+CONFIG_PATH = os.path.join(EXE_DIR, 'config.json')
+CLEAN_EXIT = os.path.join(EXE_DIR, 'lion_clean_exit.txt')
+WATCHDOG = os.path.join(APP_DIR, 'lion_watchdog.py')   # 开发模式用
 
 
 def _get_machine_id():
@@ -49,7 +58,7 @@ def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
     - config.json 不存在：不做处理
     - machine_id 缺失：首次运行，写入当前机器 ID
-    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60、nickname=小Leo，更新机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 commands、idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -66,7 +75,9 @@ def _ensure_device_config():
         except Exception:
             pass
     elif cur_mid and saved_mid != cur_mid:
+        # 设备不匹配（分享/换设备）-> 重置 commands、idle_timeout、nickname
         try:
+            data['commands'] = list(DEFAULT_COMMANDS)
             data['idle_timeout'] = 60
             data['nickname'] = '小Leo'
             data['machine_id'] = cur_mid
@@ -74,7 +85,8 @@ def _ensure_device_config():
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-HTML = os.path.join(DIR, 'manager_ui', 'app.html')
+HTML = os.path.join(RES_DIR, 'manager_ui', 'app.html')
+ICON_PATH = os.path.join(RES_DIR, 'app-icon.ico')
 PYW = sys.executable                 # bat 用 pythonw 启动，故为 pythonw.exe
 PET_PORT = 52718                     # 桌宠单实例锁端口（lion_desktop.py）
 MGR_PORT = 52719                     # 管理软件单实例锁端口
@@ -127,8 +139,13 @@ class ManagerApi:
                 os.remove(CLEAN_EXIT)          # 清掉旧标记，允许 watchdog 正常工作
             except OSError:
                 pass
-            subprocess.Popen([PYW, WATCHDOG],
-                             creationflags=subprocess.CREATE_NO_WINDOW)
+            if getattr(sys, 'frozen', False):
+                # 被启动器调用：用启动器 exe + --run 参数启动子进程
+                subprocess.Popen([sys.executable, '--run', 'lion_watchdog'],
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                subprocess.Popen([PYW, WATCHDOG],
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
             return True
         except Exception:
             return False
@@ -196,9 +213,12 @@ Get-StartApps | ForEach-Object {
     def get_commands(self):
         try:
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f).get('commands', [])
+                cmds = json.load(f).get('commands')
+                if cmds is not None:
+                    return cmds
         except Exception:
-            return []
+            pass
+        return list(DEFAULT_COMMANDS)
 
     def save_commands(self, commands):
         try:
@@ -251,9 +271,10 @@ Get-StartApps | ForEach-Object {
             subprocess.run(
                 ['powershell', '-NoProfile', '-Command',
                  "Get-CimInstance Win32_Process -Filter "
-                 "\"Name='pythonw.exe' OR Name='python.exe'\" | "
-                 "Where-Object { $_.CommandLine -like '*lion_desktop.py*' "
-                 "-or $_.CommandLine -like '*lion_watchdog.py*' } | "
+                 "\"Name='pythonw.exe' OR Name='python.exe' "
+                 "OR Name='Leo桌宠.exe'\" | "
+                 "Where-Object { $_.CommandLine -like '*lion_desktop*' "
+                 "-or $_.CommandLine -like '*lion_watchdog*' } | "
                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
                  "-ErrorAction SilentlyContinue }"],
                 capture_output=True, timeout=10,
@@ -278,7 +299,7 @@ def show_splash(stop_event):
     # 狮子图片
     photo = None
     try:
-        img = Image.open(os.path.join(DIR, 'manager_ui', 'assets', 'lion-pet.png'))
+        img = Image.open(os.path.join(RES_DIR, 'manager_ui', 'assets', 'lion-pet.png'))
         img = img.resize((100, 100), Image.LANCZOS)
         photo = ImageTk.PhotoImage(img)
     except Exception:
@@ -289,7 +310,7 @@ def show_splash(stop_event):
 
     if photo:
         tk.Label(frame, image=photo, bg='#faf8f5').pack(pady=(120, 12))
-    tk.Label(frame, text='桌面宠物', font=('Microsoft YaHei UI', 18, 'bold'),
+    tk.Label(frame, text='Leo桌宠', font=('Microsoft YaHei UI', 18, 'bold'),
              fg='#2d2420', bg='#faf8f5').pack(pady=(0, 32))
 
     # 旋转 spinner
@@ -297,7 +318,7 @@ def show_splash(stop_event):
                        highlightthickness=0)
     canvas.pack(pady=(0, 8))
 
-    status_var = tk.StringVar(value='狮子正在赶来陪你')
+    status_var = tk.StringVar(value='Leo正在赶来陪你')
     tk.Label(frame, textvariable=status_var,
              font=('Microsoft YaHei UI', 10),
              fg='#8c7b6e', bg='#faf8f5').pack()
@@ -318,7 +339,7 @@ def show_splash(stop_event):
     dots = [0]
     def animate_dots():
         dots[0] = (dots[0] + 1) % 4
-        status_var.set('狮子正在赶来陪你' + '.' * dots[0])
+        status_var.set('Leo正在赶来陪你' + '.' * dots[0])
         if not stop_event.is_set():
             root.after(500, animate_dots)
     root.after(500, animate_dots)
@@ -371,10 +392,19 @@ def main():
     api = ManagerApi()
     api._stop_splash = stop_splash
     window = webview.create_window(
-        '桌宠管理', HTML, js_api=api,
+        'Leo桌宠', HTML, js_api=api,
         width=440, height=720, resizable=False, min_size=(420, 600),
         background_color='#faf8f5', hidden=True)
     api._window = window
+
+    # 关闭窗口（×）时：只写退出标记（即时），不阻塞窗口关闭
+    def on_closing():
+        try:
+            with open(CLEAN_EXIT, 'w') as f:
+                f.write('ok')
+        except Exception:
+            pass
+    window.events.closing += on_closing
 
     # 兜底：若 page_loaded() 3 秒内未触发，强制显示窗口并关闭 splash
     def on_ready():
@@ -385,6 +415,11 @@ def main():
             time.sleep(0.2)
             stop_splash.set()
     webview.start(func=on_ready)
+    # 窗口已关闭，清理桌宠和守护进程（用户无感知，不阻塞 UI）
+    try:
+        api._kill_lion()
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

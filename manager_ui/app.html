@@ -6,7 +6,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>桌宠管理</title>
+<title>Leo桌宠</title>
+<link rel="icon" href="../app-icon.ico">
 <style id="theme-vars">
 /* ===== 桌宠管理软件 - 设计令牌（复用 design 设计稿）===== */
 /* Brand: 暖橙琥珀 — 呼应狮子形象，温暖有陪伴感 */
@@ -108,7 +109,7 @@
         </div>
         <div class="flex items-center gap-2">
           <span id="status-dot" class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: var(--brand-muted-foreground);"></span>
-          <span id="status-text" class="text-muted-foreground text-sm">狮子未启动</span>
+          <span id="status-text" class="text-muted-foreground text-sm">Leo未启动</span>
         </div>
       </section>
 
@@ -125,7 +126,7 @@
       <!-- 提示 -->
       <div class="bg-muted rounded-[var(--brand-radius-md)] p-3 flex items-start gap-2">
         <i data-lucide="info" class="w-4 h-4 text-muted-foreground shrink-0 mt-0.5"></i>
-        <p class="text-muted-foreground text-xs leading-relaxed">提示：单击宠物弹出对话气泡（快捷指令/天气/时间）；右键宠物可回到右下角或退出。关闭本窗口不影响桌宠运行。</p>
+        <p class="text-muted-foreground text-xs leading-relaxed">提示：单击宠物弹出对话气泡（快捷指令/天气/时间）；右键宠物可回到右下角或退出。关闭本窗口桌宠自动退出。</p>
       </div>
     </div>
   </div>
@@ -343,10 +344,10 @@ async function refreshStatus(){
   const dot = $('status-dot'), txt = $('status-text');
   if (running){
     dot.style.backgroundColor = 'var(--state-success)';
-    txt.textContent = '狮子运行中';
+    txt.textContent = 'Leo运行中';
   } else {
     dot.style.backgroundColor = 'var(--brand-muted-foreground)';
-    txt.textContent = '狮子未启动';
+    txt.textContent = 'Leo未启动';
   }
 }
 

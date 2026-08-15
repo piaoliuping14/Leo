@@ -1,9 +1,7 @@
 # Runtime artifacts (created at run time — do not commit)
 lion_clean_exit.txt
-lion.log
+logs/
 *.log
-
-katong/
 
 # Python 编译缓存
 __pycache__/
@@ -15,4 +13,11 @@ config.json
 # IDE / editor local config
 .claude/
 
-design/
+# design 目录：只保留运行必需的 文案.txt，忽略其余设计稿/文档/提示词
+design/*
+!design/文案.txt
+
+# PyInstaller 打包产物
+build/
+dist/
+_libs/

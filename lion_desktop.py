@@ -34,12 +34,24 @@ from tkinter import font as tkfont
 from PIL import Image, ImageTk, ImageDraw
 
 # ---------- 路径 ----------
-DIR = os.path.dirname(os.path.abspath(__file__))
-IMG_PATH = os.path.join(DIR, 'katong', '狮子111-no-bg.png')
-LOG_PATH = os.path.join(DIR, 'lion.log')
-CLEAN_EXIT = os.path.join(DIR, 'lion_clean_exit.txt')
-CONFIG_PATH = os.path.join(DIR, 'config.json')
-QUOTES_PATH = os.path.join(DIR, 'design', '文案.txt')
+if getattr(sys, 'frozen', False):
+    # 被启动器调用：用户文件放 exe 目录，资源放核心代码目录（app/）
+    EXE_DIR = os.path.dirname(sys.executable)
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+else:
+    # 独立运行（开发模式）
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+    EXE_DIR = APP_DIR
+IMG_PATH = os.path.join(RES_DIR, 'katong', '狮子111-no-bg.png')
+LOG_DIR = os.path.join(EXE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_PATH = os.path.join(LOG_DIR, 'lion.log')
+CLEAN_EXIT = os.path.join(EXE_DIR, 'lion_clean_exit.txt')
+CONFIG_PATH = os.path.join(EXE_DIR, 'config.json')
+QUOTES_PATH = os.path.join(RES_DIR, 'design', '文案.txt')
+ICON_PATH = os.path.join(RES_DIR, 'app-icon.ico')
 
 # ---------- 闲置气泡默认配置 ----------
 IDLE_TIMEOUT = 60.0          # 闲置多少秒后触发
@@ -47,9 +59,7 @@ IDLE_BUBBLE_DURATION = 10.0  # 闲置气泡显示时长
 
 # ---------- 快捷指令默认配置（config.json 缺失时回退）----------
 DEFAULT_COMMANDS = [
-    {'name': '启动Claude',  'type': 'app', 'target': 'Claude_pzs8sxrjxfjjc!Claude',     'icon': 'sparkles'},
-    {'name': '启动ChatGPT', 'type': 'app', 'target': 'OpenAI.Codex_2p2nqsd0c76g0!App', 'icon': 'message-circle'},
-    {'name': '启动B站',      'type': 'url', 'target': 'https://www.bilibili.com/',       'icon': 'play'},
+    {'name': '启动B站', 'type': 'url', 'target': 'https://www.bilibili.com/', 'icon': 'play'},
 ]
 
 
@@ -111,7 +121,7 @@ def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
     - config.json 不存在：不做处理（各读取函数返回默认值）
     - machine_id 缺失：首次运行，写入当前机器 ID
-    - machine_id 不匹配：换设备/被分享，重置 idle_timeout=60、nickname=小Leo，更新机器 ID
+    - machine_id 不匹配：换设备/被分享，重置 commands、idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -129,8 +139,9 @@ def _ensure_device_config():
         except Exception:
             pass
     elif cur_mid and saved_mid != cur_mid:
-        # 设备不匹配（分享/换设备）-> 重置 idle_timeout、nickname
+        # 设备不匹配（分享/换设备）-> 重置 commands、idle_timeout、nickname
         try:
+            data['commands'] = list(DEFAULT_COMMANDS)
             data['idle_timeout'] = 60
             data['nickname'] = '小Leo'
             data['machine_id'] = cur_mid
@@ -230,19 +241,117 @@ def render_frame(base, fw, fh, pad, angle, bob, breath):
     return binarize_alpha(canvas)           # 旋转插值边缘 -> 硬边缘
 
 
+# ---------- 自定义右键菜单 ----------
+class ContextMenu:
+    """自定义右键菜单：白底圆角 + 悬停高亮，替代系统默认 tk.Menu。"""
+    BG = '#ffffff'
+    FG = '#5a4a3e'
+    HOVER_BG = '#fff4ec'
+    HOVER_FG = '#e8843c'
+    BORDER = '#e8e0d6'
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.top = None
+        self._items = []
+
+    def add_command(self, label, command):
+        self._items.append({'label': label, 'command': command})
+
+    def add_separator(self):
+        self._items.append({'separator': True})
+
+    def show(self, x, y):
+        if self.top:
+            self._close()
+
+        self.top = tk.Toplevel(self.parent)
+        self.top.overrideredirect(True)
+        self.top.attributes('-topmost', True)
+        self.top.config(bg=self.BORDER)
+
+        item_h = 22
+        sep_h = 6
+        pad_v = 4
+        w = 120
+
+        sep_count = sum(1 for i in self._items if i.get('separator'))
+        cmd_count = len(self._items) - sep_count
+        h = pad_v * 2 + cmd_count * item_h + sep_count * sep_h
+
+        # 屏幕边界检查
+        sw = ctypes.windll.user32.GetSystemMetrics(0)
+        sh = ctypes.windll.user32.GetSystemMetrics(1)
+        if x + w > sw - 4:
+            x = sw - w - 4
+        if y + h > sh - 4:
+            y = sh - h - 4
+
+        self.top.geometry('%dx%d+%d+%d' % (w, h, x, y))
+
+        container = tk.Frame(self.top, bg=self.BG, bd=0,
+                             highlightthickness=1,
+                             highlightbackground=self.BORDER,
+                             highlightcolor=self.BORDER)
+        container.pack(fill='both', expand=True, padx=1, pady=1)
+
+        y_pos = pad_v
+        for item in self._items:
+            if item.get('separator'):
+                sep = tk.Frame(container, bg=self.BORDER, height=1)
+                sep.place(x=14, y=y_pos + sep_h // 2, width=w - 30, height=1)
+                y_pos += sep_h
+            else:
+                row = tk.Frame(container, bg=self.BG, cursor='hand2')
+                row.place(x=4, y=y_pos, width=w - 8, height=item_h)
+
+                label = tk.Label(row, text=item['label'],
+                                 font=('Microsoft YaHei UI', 9),
+                                 fg=self.FG, bg=self.BG,
+                                 anchor='w', padx=12, cursor='hand2')
+                label.pack(fill='both', expand=True)
+
+                cmd = item['command']
+                row.bind('<Enter>', lambda e, r=row, l=label:
+                         (r.config(bg=self.HOVER_BG),
+                          l.config(bg=self.HOVER_BG, fg=self.HOVER_FG)))
+                row.bind('<Leave>', lambda e, r=row, l=label:
+                         (r.config(bg=self.BG),
+                          l.config(bg=self.BG, fg=self.FG)))
+
+                def on_click(e, c=cmd):
+                    self._close()
+                    c()
+
+                row.bind('<Button-1>', on_click)
+                label.bind('<Button-1>', on_click)
+                y_pos += item_h
+
+        self.top.bind('<FocusOut>', lambda e: self._close())
+        self.top.focus_set()
+
+    def _close(self):
+        if self.top:
+            try:
+                self.top.destroy()
+            except Exception:
+                pass
+            self.top = None
+
+
 # ---------- 对话气泡 ----------
 class BubbleWindow:
     """可动态切换内容的对话气泡：set_content() 更新文本和按钮后 show() 即可。"""
     TAIL_ALLOW = 14                         # 尾巴预留宽度（整体收入窗口，不被裁切）
     KEY = 'magenta'
-    BG       = (252, 252, 254)              # 极浅冷白
-    BORDER   = (214, 221, 234)
-    TEXT     = (34, 48, 70)
-    BTN_BASE = (244, 246, 251)
-    BTN_HOVER= (224, 234, 252)
-    BTN_BD   = (204, 214, 233)
-    BTN_TX   = (46, 64, 92)
-    BTN_TXH  = (26, 86, 170)
+    BG       = (255, 250, 245)             # 暖白（米色）
+    BORDER   = (232, 216, 196)             # 暖灰边框
+    TEXT     = (90, 74, 62)                # 暖棕文字
+    BTN_BASE = (255, 235, 215)             # 浅橙底
+    BTN_HOVER= (255, 195, 140)             # 橙色悬停
+    BTN_BD   = (232, 184, 140)             # 橙边框
+    BTN_TX   = (140, 80, 30)               # 棕橙文字
+    BTN_TXH  = (200, 80, 20)               # 深橙悬停文字
 
     def __init__(self, parent, on_close):
         self.on_close = on_close
@@ -346,7 +455,10 @@ class BubbleWindow:
         # 气泡宽度
         cols_in_use = min(self.cols, n) if n > 0 else 0
         btn_row_w = cols_in_use * self.btn_w + max(0, cols_in_use - 1) * self.gap
-        self.bw = max(lab_w + 2 * self.pad_lr, btn_row_w + 2 * self.pad_lr, 160)
+        if n > 0:
+            self.bw = max(lab_w + 2 * self.pad_lr, btn_row_w + 2 * self.pad_lr, 160)
+        else:
+            self.bw = max(lab_w + 2 * self.pad_lr + 24, 160)  # +24 给关闭按钮留空间
 
         # 气泡高度
         if n > 0:
@@ -380,8 +492,8 @@ class BubbleWindow:
 
         self.close_btn = tk.Button(self.top, text='×',
                                    font=('Microsoft YaHei UI', 9, 'bold'),
-                                   fg='#965c5c', bg=self._hex(self.BG),
-                                   activebackground='#f7e2e2',
+                                   fg='#b08060', bg=self._hex(self.BG),
+                                   activebackground='#fff0e0',
                                    relief='flat', bd=0, highlightthickness=0,
                                    cursor='hand2', command=self._close)
 
@@ -742,7 +854,12 @@ class LionPet:
 
         # 主窗口（无边框 / 置顶 / 不在任务栏 / magenta 透明键）
         self.root = tk.Tk()
-        self.root.title('Desktop Lion')
+        self.root.title('Leo桌宠')
+        try:
+            if os.path.exists(ICON_PATH):
+                self.root.iconbitmap(ICON_PATH)
+        except Exception:
+            pass
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
         self.root.config(bg=self.KEY)
@@ -763,6 +880,17 @@ class LionPet:
         self.y = wa[3] - self.fh - 16
         self.root.geometry('%dx%d+%d+%d' % (self.fw, self.fh,
                                             int(self.x), int(self.y)))
+        # 隐藏任务栏图标（设为工具窗口样式）
+        try:
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                                                ex | WS_EX_TOOLWINDOW)
+        except Exception:
+            pass
 
         # 事件
         self.canvas.bind('<ButtonPress-1>', self._on_down)
@@ -775,11 +903,12 @@ class LionPet:
         self.bubble = BubbleWindow(self.root, self._on_bubble_closed)
         self.idle_bubble = IdleBubble(self.root)
 
-        # 右键菜单
-        self.menu = tk.Menu(self.root, tearoff=0)
-        self.menu.add_command(label='打开对话', command=self._toggle_bubble)
-        self.menu.add_command(label='回到右下角', command=self._reset_pos)
-        self.menu.add_command(label='退出', command=self._quit)
+        # 右键菜单（自定义样式）
+        self.menu = ContextMenu(self.root)
+        self.menu.add_command('打开对话', self._toggle_bubble)
+        self.menu.add_command('回到右下角', self._reset_pos)
+        self.menu.add_separator()
+        self.menu.add_command('退出', self._quit)
 
         self._last_key = None
         self._render()
@@ -839,7 +968,7 @@ class LionPet:
             self._toggle_bubble()
 
     def _on_rclick(self, e):
-        self.menu.tk_popup(e.x_root, e.y_root)
+        self.menu.show(e.x_root, e.y_root)
 
     # ---------- 气泡 ----------
     def _on_bubble_closed(self):
@@ -855,10 +984,10 @@ class LionPet:
             self._show_main_bubble()
 
     def _show_main_bubble(self):
-        """主气泡：问候语 + 快捷指令 / 天气 / 时间 三按钮。"""
+        """主气泡：问候语 + 快捷指令 / 音乐盒 / 时间 三按钮。"""
         self.bubble.set_content(
             self.bubble_text,
-            ['快捷指令', '天气', '时间'],
+            ['快捷指令', '音乐盒', '时间'],
             self._on_main_btn_click)
         self.bubble_open = True
         self.hop_t = 0.35                  # 开心一跳
@@ -870,7 +999,7 @@ class LionPet:
         if idx == 0:
             self._show_commands_bubble()
         elif idx == 1:
-            self._show_weather_bubble()
+            self._show_music_bubble()
         elif idx == 2:
             self._show_time_bubble()
 
@@ -887,9 +1016,9 @@ class LionPet:
         self.bubble.close()
         self._execute_command(idx)
 
-    def _show_weather_bubble(self):
-        """天气子气泡：显示天气信息（暂为占位，后续可接入 API）。"""
-        self.bubble.set_content('天气服务暂未接入，敬请期待', [], None)
+    def _show_music_bubble(self):
+        """音乐盒子气泡：显示音乐盒信息（暂为占位，后续可接入）。"""
+        self.bubble.set_content('音乐盒功能即将上线，敬请期待', [], None)
         self.bubble_open = True
         self.bubble.show(self.x, self.y, self.fw, self.fh)
 
