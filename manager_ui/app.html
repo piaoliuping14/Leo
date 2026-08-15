@@ -116,7 +116,7 @@
       </button>
       <div class="flex-1">
         <h1 class="text-xl font-bold tracking-tight">快捷指令</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">配置宠物点击后打开的软件、网站或文件</p>
+        <p class="text-sm text-muted-foreground mt-0.5">拖拽排序 · 点击编辑 · 气泡按三列网格展示</p>
       </div>
     </div>
 
@@ -189,6 +189,7 @@
 <script>
 let commands = [];
 let editingIndex = -1;
+let dragSrcIdx = null;
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -227,9 +228,14 @@ function renderCommands(){
   }
   commands.forEach((cmd, i) => {
     const div = document.createElement('div');
-    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-pointer';
+    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-grab';
     div.style.boxShadow = 'var(--shadow-1)';
+    div.draggable = true;
+    div.dataset.idx = i;
     div.innerHTML = `
+      <div class="shrink-0 text-muted-foreground/30">
+        <i data-lucide="grip-vertical" class="w-4 h-4"></i>
+      </div>
       <div class="w-9 h-9 rounded-[var(--brand-radius-sm)] bg-muted flex items-center justify-center shrink-0">
         <i data-lucide="${esc(cmd.icon||'app')}" class="w-5 h-5" style="color:var(--brand-primary)"></i>
       </div>
@@ -240,6 +246,46 @@ function renderCommands(){
       <button class="cmd-del w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-[var(--state-error)]/10" style="color:var(--state-error)" title="删除">
         <i data-lucide="x" class="w-4 h-4"></i>
       </button>`;
+
+    // 拖拽排序
+    div.addEventListener('dragstart', (e) => {
+      dragSrcIdx = i;
+      div.style.opacity = '0.4';
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    div.addEventListener('dragend', () => {
+      div.style.opacity = '';
+      list.querySelectorAll('.cmd-item').forEach(el => {
+        el.style.borderTopColor = '';
+        el.style.borderBottomColor = '';
+      });
+      dragSrcIdx = null;
+    });
+    div.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragSrcIdx !== null && i !== dragSrcIdx) {
+        list.querySelectorAll('.cmd-item').forEach(el => {
+          el.style.borderTopColor = '';
+          el.style.borderBottomColor = '';
+        });
+        if (i < dragSrcIdx) {
+          div.style.borderTopColor = 'var(--brand-primary)';
+        } else {
+          div.style.borderBottomColor = 'var(--brand-primary)';
+        }
+      }
+    });
+    div.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragSrcIdx !== null && dragSrcIdx !== i) {
+        const moved = commands.splice(dragSrcIdx, 1)[0];
+        commands.splice(i, 0, moved);
+        window.pywebview.api.save_commands(commands);
+        renderCommands();
+      }
+    });
+
     div.querySelector('.cmd-del').addEventListener('click', (e)=>{ e.stopPropagation(); deleteCommand(i); });
     div.addEventListener('click', ()=> editCommand(i));
     list.appendChild(div);

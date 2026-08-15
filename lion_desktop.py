@@ -159,12 +159,18 @@ class BubbleWindow:
         # 字体 & 布局参数
         self.font_lab = tkfont.Font(family='Microsoft YaHei UI', size=10)
         self.font_btn = tkfont.Font(family='Microsoft YaHei UI', size=9)
-        self.btn_h = 28
-        self.gap = 8
+        self.btn_h = 28               # 基础按钮高度（单行）
+        self.gap = 8                  # 按钮间水平间距
+        self.row_gap = 6              # 行间距
         self.pad_lr = 14
         self.lab_top = 11
         self.lab_gap = 9
         self.bot_pad = 11
+        self.cols = 3                 # 每行按钮数
+        self.btn_w = 85               # 固定按钮宽度
+        self.wrap_len = self.btn_w - 12   # 按钮文本换行宽度
+        self.btn_heights = []         # 各按钮高度
+        self.row_heights = []         # 各行高度（取该行最大值）
 
         # Toplevel
         self.top = tk.Toplevel(parent)
@@ -214,21 +220,41 @@ class BubbleWindow:
         self._cur_tail = None               # 强制下次 show/position 时重建
 
     def _calc_layout(self, text, btn_labels):
-        """根据文本和按钮列表计算气泡尺寸。"""
+        """根据文本和按钮列表计算气泡尺寸（三列网格布局）。"""
         lab_w = self.font_lab.measure(text) + 4              # +4px 防止末尾字符被裁切
         lab_h = self.font_lab.metrics('linespace')
         names = btn_labels or []
-        max_bw = max((self.font_btn.measure(n) for n in names), default=0)
-        self.btn_w = max_bw + 24
         n = len(names)
-        btn_row_w = n * self.btn_w + (n - 1) * self.gap if n > 0 else 0
+
+        # 计算每个按钮高度（文本超宽时换行）
+        line_h = self.font_btn.metrics('linespace')
+        self.btn_heights = []
+        for name in names:
+            tw = self.font_btn.measure(name)
+            if tw <= self.wrap_len:
+                self.btn_heights.append(self.btn_h)
+            else:
+                lines = max(1, math.ceil(tw / self.wrap_len))
+                self.btn_heights.append(self.btn_h + (lines - 1) * line_h)
+
+        # 计算每行高度（取该行最大值）
+        self.row_heights = []
+        for i in range(0, n, self.cols):
+            row = self.btn_heights[i:i + self.cols]
+            self.row_heights.append(max(row) if row else self.btn_h)
+
+        # 气泡宽度
+        cols_in_use = min(self.cols, n) if n > 0 else 0
+        btn_row_w = cols_in_use * self.btn_w + max(0, cols_in_use - 1) * self.gap
         self.bw = max(lab_w + 2 * self.pad_lr, btn_row_w + 2 * self.pad_lr, 160)
+
+        # 气泡高度
         if n > 0:
-            self.bh = self.lab_top + lab_h + self.lab_gap + self.btn_h + self.bot_pad
+            total_btn_h = sum(self.row_heights) + max(0, len(self.row_heights) - 1) * self.row_gap
+            self.bh = self.lab_top + lab_h + self.lab_gap + total_btn_h + self.bot_pad
         else:
             self.bh = self.lab_top + lab_h + 20
         self.btn_y = self.lab_top + lab_h + self.lab_gap
-        self.x0 = (self.bw - btn_row_w) // 2
 
     def _create_widgets(self):
         """根据当前内容创建标签、按钮、关闭按钮。"""
@@ -243,7 +269,8 @@ class BubbleWindow:
                           activebackground=self._hex(self.BTN_HOVER),
                           activeforeground=self._hex(self.BTN_TXH),
                           relief='flat', bd=0, highlightthickness=0,
-                          padx=0, pady=0, cursor='hand2')
+                          padx=6, pady=4, cursor='hand2',
+                          wraplength=self.wrap_len, justify='center')
             b.pack(fill='both', expand=True, padx=1, pady=1)
             b.bind('<Enter>', lambda e, bb=b, idx=i: self._hover(bb, idx, True))
             b.bind('<Leave>', lambda e, bb=b, idx=i: self._hover(bb, idx, False))
@@ -300,9 +327,24 @@ class BubbleWindow:
         self.canvas.itemconfig(self.img_item, image=self.bubble_photo)
         body_x = 0 if tail_right else self.TAIL_ALLOW
         self.label.place(x=body_x + self.pad_lr, y=self.lab_top)
-        for i, f in enumerate(self.btn_frames):
-            f.place(x=body_x + self.x0 + i * (self.btn_w + self.gap),
-                    y=self.btn_y, width=self.btn_w, height=self.btn_h)
+
+        # 三列网格布局
+        n = len(self.btn_frames)
+        cols_in_use = min(self.cols, n)
+        btn_row_w = cols_in_use * self.btn_w + max(0, cols_in_use - 1) * self.gap
+        x0 = body_x + (self.bw - btn_row_w) // 2
+
+        y = self.btn_y
+        for row_idx in range(len(self.row_heights)):
+            row_h = self.row_heights[row_idx]
+            for col_idx in range(self.cols):
+                bi = row_idx * self.cols + col_idx
+                if bi >= n:
+                    break
+                x = x0 + col_idx * (self.btn_w + self.gap)
+                self.btn_frames[bi].place(x=x, y=y, width=self.btn_w, height=row_h)
+            y += row_h + self.row_gap
+
         self.close_btn.place(x=body_x + self.bw - 23, y=4, width=18, height=18)
 
     def _place_at(self, pet_x, pet_y, pet_fw, pet_fh):
@@ -539,6 +581,7 @@ class LionPet:
 
     def _show_commands_bubble(self):
         """快捷指令子气泡：展示 config.json 中的指令列表。"""
+        self.commands = load_commands()               # 每次打开重新读取，确保最新
         cmd_names = [c.get('name', '') for c in self.commands]
         self.bubble.set_content('小主人，您要打开什么呀？', cmd_names, self._on_cmd_btn_click)
         self.bubble_open = True
