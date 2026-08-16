@@ -416,7 +416,13 @@ def main():
             window.show()
             time.sleep(0.2)
             stop_splash.set()
-    webview.start(func=on_ready)
+    # 强制使用 EdgeChromium（WebView2）后端，避免 winforms/pythonnet 依赖 .NET Framework
+    # Windows 11 自带 WebView2，Windows 10 多数预装；若缺失 pywebview 会自动提示安装
+    try:
+        webview.start(gui='edgechrom', func=on_ready)
+    except Exception:
+        # WebView2 不可用时回退到默认后端（winforms，需 .NET Framework）
+        webview.start(func=on_ready)
     # 窗口已关闭，清理桌宠和守护进程（用户无感知，不阻塞 UI）
     try:
         api._kill_lion()
