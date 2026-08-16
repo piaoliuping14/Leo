@@ -2,5 +2,17 @@
 Pillow>=8.2.0
 pywebview>=5.0
 
+# 音乐盒功能依赖（Windows SMTC 媒体控制 + pycaw 音量控制）
+# winrt 用于访问 Windows Runtime API（SMTC 系统媒体传输控制）
+# 注意：winrt 按命名空间拆分包，每个子模块需单独安装
+winrt-runtime>=2.0
+winrt-Windows.Foundation>=2.0
+winrt-Windows.Foundation.Collections>=2.0
+winrt-Windows.Media>=2.0
+winrt-Windows.Media.Control>=2.0
+winrt-Windows.Storage.Streams>=2.0
+# pycaw 用于独立音量控制（Windows Core Audio API，与 SMTC 解耦）
+pycaw>=20230407
+
 # tkinter 随 Python 标准库自带（Windows 官方安装包已包含），无需 pip 安装。
 # 若缺失（少见），可用官方安装包修复，或 Linux 下执行：sudo apt install python3-tk

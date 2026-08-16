@@ -33,6 +33,10 @@ import tkinter as tk
 from tkinter import font as tkfont
 from PIL import Image, ImageTk, ImageDraw
 
+# 音乐盒模块（SMTC 媒体控制 + pycaw 音量控制 + 主题配置）
+from music_theme import MusicTheme
+from music_box import get_controller, MediaInfo, _fmt_time
+
 # ---------- 路径 ----------
 if getattr(sys, 'frozen', False):
     # 被启动器调用：用户文件放 exe 目录，资源放核心代码目录（app/）
@@ -798,6 +802,776 @@ class IdleBubble:
             pass
 
 
+# ---------- 音乐盒气泡 ----------
+class _CanvasButton:
+    """Canvas 自绘按钮：完全无边框，外观由主题配置控制。
+
+    【主题系统 - 重点标记】
+    按钮颜色、尺寸均从 MusicTheme 读取，支持自定义。
+    用 Canvas 绘制圆形背景 + 文字，彻底消除 tk.Button 的系统主题边框。
+    提供 config(text=, state=, command=) 和 place() 接口，兼容原 tk.Button 用法。
+    """
+
+    def __init__(self, parent, text, size, font, theme, is_play=False):
+        self._t = theme
+        self._text = text
+        self._size = size
+        self._font = font
+        self._is_play = is_play
+        self._enabled = True
+        self._command = None
+        self._hovered = False
+
+        self.canvas = tk.Canvas(parent, width=size, height=size,
+                                bg=theme._hex(theme.BG),
+                                highlightthickness=0, bd=0)
+        self.canvas.bind('<Enter>', self._on_enter)
+        self.canvas.bind('<Leave>', self._on_leave)
+        self.canvas.bind('<Button-1>', self._on_click)
+        self._draw()
+
+    def _cur_bg(self):
+        """当前背景色（考虑悬停/禁用/播放按钮状态）。"""
+        t = self._t
+        if not self._enabled:
+            return t.BTN_DISABLED
+        if self._is_play:
+            return t.BTN_PLAY_HOVER if self._hovered else t.BTN_PLAY_BG
+        return t.BTN_HOVER if self._hovered else t.BTN_BG
+
+    def _draw(self):
+        """重绘按钮。"""
+        c = self.canvas
+        t = self._t
+        c.delete('btn')
+        bg = self._cur_bg()
+        # 圆形背景
+        c.create_oval(0, 0, self._size, self._size,
+                      fill=t._hex(bg), outline='', tags='btn')
+        # 文字/图标
+        tc = t._hex(t.BTN_TEXT) if self._enabled else t._hex(t.HINT_COLOR)
+        c.create_text(self._size // 2, self._size // 2,
+                      text=self._text, font=self._font,
+                      fill=tc, tags='btn')
+
+    def _on_enter(self, e):
+        self._hovered = True
+        self._draw()
+
+    def _on_leave(self, e):
+        self._hovered = False
+        self._draw()
+
+    def _on_click(self, e):
+        if self._enabled and self._command:
+            self._command()
+
+    def config(self, **kw):
+        """兼容 tk.Button 的 config 接口。"""
+        if 'text' in kw:
+            self._text = kw['text']
+        if 'state' in kw:
+            self._enabled = (kw['state'] == 'normal')
+        if 'command' in kw:
+            self._command = kw['command']
+        self._draw()
+
+    def place(self, **kw):
+        self.canvas.place(**kw)
+
+
+class MusicBubbleWindow:
+    """音乐盒气泡：基于 Windows SMTC 显示媒体信息和控制界面。
+
+    【主题系统 - 重点标记】
+    所有颜色、尺寸、字体均从 MusicTheme 读取。
+    后续开发「换主题」功能时，只需替换 music_theme.py 中的配置值，
+    或加载不同的主题文件即可，无需改动本类逻辑。
+
+    支持自定义的元素：
+    - 进度条：轨道/填充/滑块 颜色和尺寸（PROGRESS_*）
+    - 控制按钮：上一曲/播放暂停/下一曲 颜色和尺寸（BTN_*）
+    - 音量条：轨道/填充/滑块 颜色和尺寸（VOL_*）
+    - 文字：标题/艺术家/时间/提示 字体和颜色（*_FONT / *_COLOR）
+    """
+
+    TAIL_ALLOW = 14
+    KEY = 'magenta'
+
+    def __init__(self, parent, on_close):
+        self.on_close = on_close
+        self.fade = 0.0
+        self.opened = False
+        self.bubble_photo = None
+        self._cur_tail = None
+
+        # 控制器（全局单例，后台线程轮询 SMTC）
+        self._controller = get_controller()
+        self._controller.add_callback(self._on_media_update)
+
+        # 状态（_media_info 由后台回调更新，_pending_update 标记需刷新 UI）
+        self._media_info = MediaInfo()
+        self._pending_update = False
+        self._volume = self._controller.get_volume()
+        self._muted = self._controller.is_muted()
+        self._dragging_progress = False
+        self._dragging_volume = False
+        # 进度防抖与平滑锁定策略：
+        # - tick 累加驱动显示值持续前进（不受 SMTC 采样时序偏差影响）
+        # - SMTC 回调仅在以下情况校准锚点：
+        #   1. 切歌（标题变化）
+        #   2. 播放状态切换
+        #   3. SMTC 值稳定正向偏移超过阈值（seek 前进）
+        #   4. 偏差过大时强制校准（防止长期累积误差）
+        # - 回跳噪声（43→44→43）完全忽略，显示值不跳回
+        self._last_title = ''
+        self._anchor_pos = 0.0          # tick 累加基准位置
+        self._anchor_time = 0.0         # 基准时间戳（monotonic）
+        self._last_playing = False      # 上次播放状态（检测状态切换）
+
+        # 字体（从主题配置创建）
+        self.font_title = self._make_font(MusicTheme.TITLE_FONT)
+        self.font_artist = self._make_font(MusicTheme.ARTIST_FONT)
+        self.font_time = self._make_font(MusicTheme.TIME_FONT)
+        self.font_btn = self._make_font(MusicTheme.BTN_FONT)
+        self.font_hint = self._make_font(MusicTheme.HINT_FONT)
+        self.font_vol = self._make_font(MusicTheme.VOL_FONT)
+
+        # Toplevel 窗口
+        self.top = tk.Toplevel(parent)
+        self.top.overrideredirect(True)
+        self.top.attributes('-topmost', True)
+        self.top.config(bg=self.KEY)
+        try:
+            self.top.wm_attributes('-transparentcolor', self.KEY)
+        except Exception:
+            pass
+        self.top.withdraw()
+
+        self.canvas = tk.Canvas(self.top, width=10, height=10,
+                                bg=self.KEY, highlightthickness=0, bd=0)
+        self.canvas.pack()
+        self.img_item = self.canvas.create_image(0, 0, anchor='nw')
+
+        # 控件引用
+        self.title_label = None
+        self.artist_label = None
+        self.time_cur_label = None
+        self.time_dur_label = None
+        self.prev_btn = None
+        self.play_btn = None
+        self.next_btn = None
+        self.close_btn = None
+        self.vol_label = None
+        self.progress_canvas = None
+        self.volume_canvas = None
+
+        # 计算布局并创建控件
+        self._calc_layout()
+        self._create_widgets()
+        self._apply_bubble(True)
+
+    @staticmethod
+    def _make_font(spec):
+        """从主题字体配置创建 tkfont.Font。"""
+        family = spec[0]
+        size = spec[1]
+        weight = spec[2] if len(spec) > 2 else 'normal'
+        return tkfont.Font(family=family, size=size, weight=weight)
+
+    def _calc_layout(self):
+        """计算气泡尺寸和各元素 Y 坐标。"""
+        t = MusicTheme
+        self.bw = t.BUBBLE_W
+
+        title_h = self.font_title.metrics('linespace')
+        artist_h = self.font_artist.metrics('linespace')
+        time_h = self.font_time.metrics('linespace')
+        vol_h = self.font_vol.metrics('linespace')
+
+        y = t.PAD_TOP
+        self.title_y = y
+        y += title_h + t.GAP_TITLE_ARTIST
+        self.artist_y = y
+        y += artist_h + t.GAP_ARTIST_PROG
+        self.progress_y = y
+        # 进度条 Canvas 高度 = 进度条高度 + 2*滑块半径（给滑块留空间）
+        self.progress_canvas_h = t.PROGRESS_HEIGHT + 2 * t.PROGRESS_THUMB_R
+        y += self.progress_canvas_h + t.GAP_PROG_TIME
+        self.time_y = y
+        y += time_h + t.GAP_TIME_BTNS
+        self.btn_y = y
+        y += t.BTN_PLAY_SIZE + t.GAP_BTNS_VOL
+        self.volume_y = y
+        self.volume_canvas_h = t.VOL_HEIGHT + 2 * t.VOL_THUMB_R
+        y += self.volume_canvas_h + t.GAP_VOL_LABEL
+        self.vol_label_y = y
+        y += vol_h + t.PAD_BOT
+
+        self.bh = y
+
+    def _create_widgets(self):
+        """创建所有控件。"""
+        t = MusicTheme
+
+        # 标题
+        self.title_label = tk.Label(self.top, text='未检测到媒体源',
+                                    font=self.font_title,
+                                    fg=t._hex(t.TITLE_COLOR),
+                                    bg=t._hex(t.BG),
+                                    relief='flat', bd=0, highlightthickness=0)
+
+        # 艺术家
+        self.artist_label = tk.Label(self.top, text='请打开支持 SMTC 的播放器',
+                                     font=self.font_artist,
+                                     fg=t._hex(t.ARTIST_COLOR),
+                                     bg=t._hex(t.BG),
+                                     relief='flat', bd=0, highlightthickness=0)
+
+        # 进度条 Canvas
+        prog_w = self.bw - 2 * t.PAD_LR
+        self.progress_canvas = tk.Canvas(self.top,
+                                         width=prog_w,
+                                         height=self.progress_canvas_h,
+                                         bg=t._hex(t.BG),
+                                         highlightthickness=0, bd=0)
+        self.progress_canvas.bind('<ButtonPress-1>', self._on_progress_down)
+        self.progress_canvas.bind('<B1-Motion>', self._on_progress_drag)
+        self.progress_canvas.bind('<ButtonRelease-1>', self._on_progress_up)
+
+        # 时间（当前 / 总时长）
+        self.time_cur_label = tk.Label(self.top, text='0:00',
+                                       font=self.font_time,
+                                       fg=t._hex(t.TIME_COLOR),
+                                       bg=t._hex(t.BG),
+                                       relief='flat', bd=0, highlightthickness=0)
+        self.time_dur_label = tk.Label(self.top, text='0:00',
+                                       font=self.font_time,
+                                       fg=t._hex(t.TIME_COLOR),
+                                       bg=t._hex(t.BG),
+                                       relief='flat', bd=0, highlightthickness=0)
+
+        # 控制按钮
+        self.prev_btn = self._make_btn('⏮', t.BTN_SIZE, play=False)
+        self.play_btn = self._make_btn('▶', t.BTN_PLAY_SIZE, play=True)
+        self.next_btn = self._make_btn('⏭', t.BTN_SIZE, play=False)
+
+        self.prev_btn.config(command=self._on_prev)
+        self.play_btn.config(command=self._on_play_pause)
+        self.next_btn.config(command=self._on_next)
+
+        # 音量条 Canvas
+        self.volume_canvas = tk.Canvas(self.top,
+                                       width=self.bw - 2 * t.PAD_LR,
+                                       height=self.volume_canvas_h,
+                                       bg=t._hex(t.BG),
+                                       highlightthickness=0, bd=0)
+        self.volume_canvas.bind('<ButtonPress-1>', self._on_volume_down)
+        self.volume_canvas.bind('<B1-Motion>', self._on_volume_drag)
+        self.volume_canvas.bind('<ButtonRelease-1>', self._on_volume_up)
+
+        # 音量百分比
+        self.vol_label = tk.Label(self.top, text='',
+                                  font=self.font_vol,
+                                  fg=t._hex(t.TIME_COLOR),
+                                  bg=t._hex(t.BG),
+                                  relief='flat', bd=0, highlightthickness=0)
+
+        # 关闭按钮
+        self.close_btn = tk.Button(self.top, text='×',
+                                   font=('Microsoft YaHei UI', 9, 'bold'),
+                                   fg=t._hex(t.CLOSE_COLOR),
+                                   bg=t._hex(t.BG),
+                                   activebackground='#fff0e0',
+                                   relief='flat', bd=0, highlightthickness=0,
+                                   cursor='hand2', command=self._close)
+
+    def _make_btn(self, text, size, play=False):
+        """创建控制按钮（Canvas 自绘，完全无边框）。
+
+        【主题系统】按钮颜色从 MusicTheme 读取，支持自定义。
+        """
+        return _CanvasButton(self.top, text, size, self.font_btn,
+                             MusicTheme, is_play=play)
+
+    def _make_bubble_img(self, tail_right):
+        """生成气泡背景图：圆角矩形 + 侧边尾巴。"""
+        t = MusicTheme
+        bw, bh = self.bw, self.bh
+        tail = self.TAIL_ALLOW
+        win_w = bw + tail + 1
+        img = Image.new('RGBA', (win_w, bh), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        bx = 0 if tail_right else tail
+        r = 10
+        d.rounded_rectangle([bx, 0, bx + bw - 1, bh - 1], radius=r,
+                            fill=t.BG, outline=t.BORDER, width=1)
+        ty1 = bh - 34; ty2 = bh - 20; tmy = bh - 27
+        if tail_right:
+            apex = bx + bw + tail - 1
+            d.polygon([(bx + bw - 1, ty1), (apex, tmy), (bx + bw - 1, ty2)],
+                      fill=t.BG)
+            d.line([(bx + bw - 1, ty1), (apex, tmy), (bx + bw - 1, ty2)],
+                   fill=t.BORDER, width=1)
+        else:
+            apex = bx - tail + 1
+            d.polygon([(bx, ty1), (apex, tmy), (bx, ty2)], fill=t.BG)
+            d.line([(bx, ty1), (apex, tmy), (bx, ty2)],
+                   fill=t.BORDER, width=1)
+        return binarize_alpha(img), win_w
+
+    def _apply_bubble(self, tail_right):
+        """应用气泡背景图并放置所有控件。"""
+        t = MusicTheme
+        img, win_w = self._make_bubble_img(tail_right)
+        self.bubble_photo = ImageTk.PhotoImage(img)
+        self.canvas.config(width=win_w, height=self.bh)
+        self.canvas.itemconfig(self.img_item, image=self.bubble_photo)
+
+        body_x = 0 if tail_right else self.TAIL_ALLOW
+        content_w = self.bw - 2 * t.PAD_LR
+
+        # 标题（居中）
+        self.title_label.place(x=body_x + t.PAD_LR, y=self.title_y,
+                               width=content_w)
+
+        # 艺术家（居中）
+        self.artist_label.place(x=body_x + t.PAD_LR, y=self.artist_y,
+                                width=content_w)
+
+        # 进度条
+        self.progress_canvas.place(x=body_x + t.PAD_LR, y=self.progress_y,
+                                   width=content_w)
+
+        # 时间（左对齐当前时间，右对齐总时长）
+        self.time_cur_label.place(x=body_x + t.PAD_LR, y=self.time_y,
+                                  anchor='nw')
+        self.time_dur_label.place(x=body_x + self.bw - t.PAD_LR, y=self.time_y,
+                                  anchor='ne')
+
+        # 控制按钮（居中排列，播放/暂停按钮稍大，垂直居中对齐）
+        btn_total_w = t.BTN_SIZE + t.BTN_GAP + t.BTN_PLAY_SIZE + t.BTN_GAP + t.BTN_SIZE
+        btn_x0 = body_x + (self.bw - btn_total_w) // 2
+        # 小按钮垂直居中于大按钮
+        small_offset = (t.BTN_PLAY_SIZE - t.BTN_SIZE) // 2
+        self.prev_btn.place(x=btn_x0, y=self.btn_y + small_offset,
+                            width=t.BTN_SIZE, height=t.BTN_SIZE)
+        self.play_btn.place(x=btn_x0 + t.BTN_SIZE + t.BTN_GAP, y=self.btn_y,
+                            width=t.BTN_PLAY_SIZE, height=t.BTN_PLAY_SIZE)
+        self.next_btn.place(x=btn_x0 + t.BTN_SIZE + t.BTN_GAP + t.BTN_PLAY_SIZE + t.BTN_GAP,
+                            y=self.btn_y + small_offset,
+                            width=t.BTN_SIZE, height=t.BTN_SIZE)
+
+        # 音量条
+        self.volume_canvas.place(x=body_x + t.PAD_LR, y=self.volume_y,
+                                 width=content_w)
+
+        # 音量百分比（居中）
+        self.vol_label.place(x=body_x + self.bw // 2, y=self.vol_label_y,
+                             anchor='n')
+
+        # 关闭按钮
+        self.close_btn.place(x=body_x + self.bw - 23, y=4,
+                             width=18, height=18)
+
+    def _place_at(self, pet_x, pet_y, pet_fw, pet_fh):
+        """计算并设置气泡位置。"""
+        wa = working_area()
+        win_w = self.bw + self.TAIL_ALLOW + 1
+        tail_right = True
+        bx = int(pet_x) - win_w - 10
+        if bx < 8:
+            bx = int(pet_x) + pet_fw + 10
+            tail_right = False
+        by = int(max(8, min(wa[3] - self.bh - 8,
+                            pet_y + pet_fh * 0.55 - self.bh / 2.0)))
+        if tail_right != self._cur_tail:
+            self._apply_bubble(tail_right)
+            self._cur_tail = tail_right
+        self.top.geometry('%dx%d+%d+%d' % (win_w, self.bh, bx, by))
+
+    def show(self, pet_x, pet_y, pet_fw, pet_fh):
+        """显示气泡。"""
+        self.opened = True
+        self.fade = 0.0
+        self._cur_tail = None
+        # 初始读取音量
+        self._volume = self._controller.get_volume()
+        self._muted = self._controller.is_muted()
+        self._place_at(pet_x, pet_y, pet_fw, pet_fh)
+        self._refresh_ui()
+        self.top.attributes('-alpha', 0.0)
+        self.top.deiconify()
+
+    def position(self, pet_x, pet_y, pet_fw, pet_fh):
+        """桌宠移动时同步气泡位置。"""
+        if not self.opened:
+            return
+        self._place_at(pet_x, pet_y, pet_fw, pet_fh)
+
+    def tick(self, dt):
+        """每帧调用：淡入动画 + 刷新 UI（主线程安全）。"""
+        if not self.opened:
+            return
+        self.fade += dt * 6.0
+        try:
+            self.top.attributes('-alpha', min(1.0, self.fade))
+        except Exception:
+            pass
+        # 如果有待处理的媒体更新，刷新整个 UI
+        if self._pending_update:
+            self._pending_update = False
+            self._refresh_ui()
+        else:
+            # 进度更新：仅播放中累加时间差，暂停时固定不变
+            # 拖动中或无时长时不更新
+            m = self._media_info
+            if (m.available and m.duration_sec > 0
+                    and not self._dragging_progress and self._anchor_time > 0):
+                if m.is_playing:
+                    elapsed = time.monotonic() - self._anchor_time
+                    m.position_sec = min(m.duration_sec, self._anchor_pos + elapsed)
+                else:
+                    m.position_sec = self._anchor_pos
+            self._refresh_progress()
+            self._refresh_volume()
+
+    def close(self):
+        """关闭气泡。"""
+        self.opened = False
+        self.fade = 0.0
+        try:
+            self.top.attributes('-alpha', 0.0)
+            self.top.withdraw()
+        except Exception:
+            pass
+        try:
+            self.on_close()
+        except Exception:
+            pass
+
+    def _close(self):
+        self.close()
+
+    # ---------- 媒体信息回调（后台线程调用）----------
+    # 防抖阈值：SMTC 值需稳定前进超过此值才校准锚点
+    PROGRESS_DEBOUNCE = 0.8       # 秒
+    # 最大允许偏差：超过此值强制校准（防止长期累积误差）
+    PROGRESS_MAX_DRIFT = 5.0      # 秒
+
+    def _on_media_update(self, media_info):
+        """媒体信息更新回调（在 MusicController 后台线程中调用）。
+
+        时间平滑锁定策略：
+        - 显示值由 tick 累加驱动（anchor_pos + elapsed），持续平稳前进
+        - SMTC 回调仅在以下情况校准锚点：
+          1. 切歌（标题变化）：重置为新位置
+          2. 播放状态切换：以当前显示位置为新锚点
+          3. SMTC 值 > 显示值 + 阈值：稳定正向偏移，接受校准
+          4. SMTC 值 < 显示值 - 最大偏差：累积误差过大，强制校准
+        - 其他情况（包括回跳噪声 43→44→43）：完全忽略，不刷新 UI
+        """
+        cur_title = media_info.title or ''
+        cur_pos = media_info.position_sec
+        now = time.monotonic()
+
+        # 计算当前显示位置（基于锚点 + 时间差）
+        if self._anchor_time > 0:
+            elapsed = now - self._anchor_time
+            if self._last_playing:
+                current_display = self._anchor_pos + elapsed
+            else:
+                current_display = self._anchor_pos
+        else:
+            current_display = cur_pos
+
+        # 1. 切歌检测：标题变化 → 新歌，重置锚点
+        if cur_title and cur_title != self._last_title:
+            self._last_title = cur_title
+            self._anchor_pos = cur_pos
+            self._anchor_time = now
+            self._last_playing = media_info.is_playing
+
+        # 2. 播放状态切换：以当前显示位置为新锚点（保持显示连续）
+        elif media_info.is_playing != self._last_playing:
+            self._last_playing = media_info.is_playing
+            self._anchor_pos = current_display
+            self._anchor_time = now
+
+        # 3. 暂停状态：不更新锚点（完全静止，tick 中 is_playing=False 不累加）
+        elif not media_info.is_playing:
+            pass
+
+        # 4. 播放中：时间平滑锁定
+        else:
+            diff = cur_pos - current_display
+            if diff > self.PROGRESS_DEBOUNCE:
+                # 稳定正向偏移（如 seek 前进）：接受校准
+                self._anchor_pos = cur_pos
+                self._anchor_time = now
+            elif diff < -self.PROGRESS_MAX_DRIFT:
+                # 偏差过大（显示值领先太多）：强制校准回 SMTC 值
+                self._anchor_pos = cur_pos
+                self._anchor_time = now
+            # 其他情况（回跳噪声、小幅波动）：忽略，依赖 tick 累加
+
+        # 同步显示位置到 media_info（tick 会继续在此基础上累加）
+        if media_info.is_playing and media_info.duration_sec > 0:
+            elapsed = now - self._anchor_time
+            media_info.position_sec = min(media_info.duration_sec,
+                                          self._anchor_pos + elapsed)
+        else:
+            media_info.position_sec = self._anchor_pos
+
+        self._media_info = media_info
+        self._pending_update = True
+
+    # ---------- UI 刷新 ----------
+    def _refresh_ui(self):
+        """刷新整个 UI（主线程）。"""
+        m = self._media_info
+
+        if m.available:
+            # 有媒体源
+            self.title_label.config(text=m.title or '未知歌曲')
+            self.artist_label.config(text=m.artist or '未知艺术家')
+            icon = '⏸' if m.is_playing else '▶'
+            self.play_btn.config(text=icon, state='normal')
+            self.prev_btn.config(state='normal')
+            self.next_btn.config(state='normal')
+        else:
+            # 无媒体源 -> 置灰控件
+            self.title_label.config(text='未检测到媒体源')
+            self.artist_label.config(text='请打开支持 SMTC 的播放器')
+            self.play_btn.config(text='▶', state='disabled')
+            self.prev_btn.config(state='disabled')
+            self.next_btn.config(state='disabled')
+
+        self._refresh_progress()
+        self._refresh_volume()
+
+    def _refresh_progress(self):
+        """刷新进度条和时间显示。
+
+        当播放器不提供时长（duration_sec == 0，如网易云部分 SMTC 插件）时，
+        进度条置灰不可拖动，时间区显示"直播模式"。
+        """
+        m = self._media_info
+        if m.available and m.duration_sec > 0:
+            # 正常模式：有总时长
+            self.time_cur_label.config(text=_fmt_time(m.position_sec))
+            self.time_dur_label.config(text=_fmt_time(m.duration_sec))
+        elif m.available:
+            # 有媒体源但无时长（网易云 SMTC 插件限制）
+            self.time_cur_label.config(text='暂未获取进度')
+            self.time_dur_label.config(text='')
+        else:
+            self.time_cur_label.config(text='0:00')
+            self.time_dur_label.config(text='0:00')
+        self._draw_progress()
+
+    def _refresh_volume(self):
+        """刷新音量条。"""
+        if not self._dragging_volume:
+            self._volume = self._controller.get_volume()
+            self._muted = self._controller.is_muted()
+        self._draw_volume()
+        pct = int(round(self._volume * 100))
+        if self._muted:
+            self.vol_label.config(text='🔇 %d%%' % pct)
+        else:
+            self.vol_label.config(text='🔊 %d%%' % pct)
+
+    def _draw_progress(self):
+        """绘制进度条。
+
+        【主题系统】进度条颜色和尺寸从 MusicTheme 读取，支持自定义。
+        左右内边距 = 滑块半径，确保首尾滑块不被裁切。
+        无时长（duration_sec == 0）时进度条置灰，不显示滑块。
+        """
+        t = MusicTheme
+        c = self.progress_canvas
+        c.delete('progress')
+        w = c.winfo_width()
+        if w <= 1:
+            w = self.bw - 2 * t.PAD_LR
+        h = self.progress_canvas_h
+
+        # 左右内边距 = 滑块半径，确保滑块在首尾位置不被裁切
+        pad = t.PROGRESS_THUMB_R
+        track_x0 = pad
+        track_x1 = w - pad
+        track_w = track_x1 - track_x0
+
+        # 轨道（垂直居中）
+        track_y = (h - t.PROGRESS_HEIGHT) // 2
+
+        m = self._media_info
+        has_duration = m.available and m.duration_sec > 0
+
+        if has_duration:
+            # 正常模式：有总时长
+            track_color = t.PROGRESS_BG
+            fill_color = t.PROGRESS_FILL
+            thumb_color = t.PROGRESS_THUMB
+            ratio = m.progress
+        else:
+            # 无时长模式：置灰，不显示填充和滑块
+            track_color = t.HINT_COLOR
+            fill_color = None
+            thumb_color = None
+            ratio = 0.0
+
+        # 轨道
+        c.create_rectangle(track_x0, track_y, track_x1, track_y + t.PROGRESS_HEIGHT,
+                           fill=t._hex(track_color), outline='', tags='progress')
+
+        # 填充（仅有时长时）
+        if fill_color:
+            fill_w = int(track_w * ratio)
+            if fill_w > 0:
+                c.create_rectangle(track_x0, track_y, track_x0 + fill_w,
+                                   track_y + t.PROGRESS_HEIGHT,
+                                   fill=t._hex(fill_color), outline='', tags='progress')
+
+            # 滑块
+            thumb_x = track_x0 + fill_w
+            thumb_y = h // 2
+            c.create_oval(thumb_x - t.PROGRESS_THUMB_R, thumb_y - t.PROGRESS_THUMB_R,
+                          thumb_x + t.PROGRESS_THUMB_R, thumb_y + t.PROGRESS_THUMB_R,
+                          fill=t._hex(thumb_color), outline='', tags='progress')
+
+    def _draw_volume(self):
+        """绘制音量条。
+
+        【主题系统】音量条颜色和尺寸从 MusicTheme 读取，支持自定义。
+        左右内边距 = 滑块半径，确保首尾滑块不被裁切。
+        """
+        t = MusicTheme
+        c = self.volume_canvas
+        c.delete('volume')
+        w = c.winfo_width()
+        if w <= 1:
+            w = self.bw - 2 * t.PAD_LR
+        h = self.volume_canvas_h
+
+        # 左右内边距 = 滑块半径，确保滑块在首尾位置不被裁切
+        pad = t.VOL_THUMB_R
+        track_x0 = pad
+        track_x1 = w - pad
+        track_w = track_x1 - track_x0
+
+        # 轨道
+        track_y = (h - t.VOL_HEIGHT) // 2
+        c.create_rectangle(track_x0, track_y, track_x1, track_y + t.VOL_HEIGHT,
+                           fill=t._hex(t.VOL_BG), outline='', tags='volume')
+
+        # 填充
+        vol = self._volume if not self._muted else 0.0
+        fill_w = int(track_w * vol)
+        if fill_w > 0:
+            c.create_rectangle(track_x0, track_y, track_x0 + fill_w,
+                               track_y + t.VOL_HEIGHT,
+                               fill=t._hex(t.VOL_FILL), outline='', tags='volume')
+
+        # 滑块
+        thumb_x = track_x0 + fill_w
+        thumb_y = h // 2
+        c.create_oval(thumb_x - t.VOL_THUMB_R, thumb_y - t.VOL_THUMB_R,
+                      thumb_x + t.VOL_THUMB_R, thumb_y + t.VOL_THUMB_R,
+                      fill=t._hex(t.VOL_THUMB), outline='', tags='volume')
+
+    # ---------- 进度条交互 ----------
+    def _on_progress_down(self, e):
+        if not self._media_info.available or self._media_info.duration_sec <= 0:
+            return
+        self._dragging_progress = True
+        self._seek_to(e.x)
+
+    def _on_progress_drag(self, e):
+        if self._dragging_progress:
+            self._seek_to(e.x)
+
+    def _on_progress_up(self, e):
+        if self._dragging_progress:
+            self._dragging_progress = False
+            self._seek_to(e.x)
+
+    def _seek_to(self, x):
+        """拖动进度条到指定位置（考虑左右内边距）。"""
+        c = self.progress_canvas
+        w = c.winfo_width()
+        if w <= 1:
+            return
+        pad = MusicTheme.PROGRESS_THUMB_R
+        track_w = w - 2 * pad
+        if track_w <= 0:
+            return
+        ratio = max(0.0, min(1.0, (x - pad) / track_w))
+        new_pos = ratio * self._media_info.duration_sec
+        # 立即更新显示，同步锚点（以新位置为锚点）
+        self._media_info.position_sec = new_pos
+        self._anchor_pos = new_pos
+        self._anchor_time = time.monotonic()
+        self._refresh_progress()
+        # 实际 seek（通过 SMTC）
+        self._controller.seek(new_pos)
+
+    # ---------- 音量条交互 ----------
+    def _on_volume_down(self, e):
+        self._dragging_volume = True
+        self._set_volume_to(e.x)
+
+    def _on_volume_drag(self, e):
+        if self._dragging_volume:
+            self._set_volume_to(e.x)
+
+    def _on_volume_up(self, e):
+        if self._dragging_volume:
+            self._dragging_volume = False
+            self._set_volume_to(e.x)
+
+    def _set_volume_to(self, x):
+        """拖动音量条到指定位置（考虑左右内边距）。"""
+        c = self.volume_canvas
+        w = c.winfo_width()
+        if w <= 1:
+            return
+        pad = MusicTheme.VOL_THUMB_R
+        track_w = w - 2 * pad
+        if track_w <= 0:
+            return
+        vol = max(0.0, min(1.0, (x - pad) / track_w))
+        self._volume = vol
+        self._controller.set_volume(vol)
+        # 如果之前是静音状态，拖动音量时自动取消静音
+        if self._muted and vol > 0:
+            self._controller.toggle_mute()
+            self._muted = False
+        self._refresh_volume()
+
+    # ---------- 媒体控制 ----------
+    def _on_play_pause(self):
+        self._controller.play_pause()
+        # 立即更新图标和播放状态（不等下次回调）
+        if self._media_info.available:
+            self._media_info.is_playing = not self._media_info.is_playing
+            icon = '⏸' if self._media_info.is_playing else '▶'
+            self.play_btn.config(text=icon)
+            # 同步锚点：以当前显示位置为新锚点，重置时间戳
+            # - 播放→暂停：tick 中 pos = _anchor_pos（冻结）
+            # - 暂停→播放：tick 中 pos = _anchor_pos + elapsed（继续前进）
+            self._anchor_pos = self._media_info.position_sec
+            self._anchor_time = time.monotonic()
+            self._last_playing = self._media_info.is_playing
+
+    def _on_next(self):
+        self._controller.next_track()
+
+    def _on_prev(self):
+        self._controller.prev_track()
+
+
 # ---------- 桌宠主体 ----------
 class LionPet:
     PAD = 26                                   # 四周留白（容纳摇摆/弹跳不裁切）
@@ -902,6 +1676,8 @@ class LionPet:
         self.commands = load_commands()
         self.bubble = BubbleWindow(self.root, self._on_bubble_closed)
         self.idle_bubble = IdleBubble(self.root)
+        self.music_bubble = MusicBubbleWindow(self.root, self._on_music_bubble_closed)
+        self.music_bubble_open = False
 
         # 右键菜单（自定义样式）
         self.menu = ContextMenu(self.root)
@@ -952,6 +1728,8 @@ class LionPet:
             self.root.geometry('+%d+%d' % (int(self.x), int(self.y)))
             if self.bubble_open:
                 self.bubble.position(self.x, self.y, self.fw, self.fh)
+            if self.music_bubble_open:
+                self.music_bubble.position(self.x, self.y, self.fw, self.fh)
             if self.idle_bubble.opened:
                 self.idle_bubble.position(self.x, self.y, self.fw, self.fh)
 
@@ -976,9 +1754,15 @@ class LionPet:
         注意：交互行为不重置闲置计时，闲置气泡按自身节奏运行。"""
         self.bubble_open = False
 
+    def _on_music_bubble_closed(self):
+        """音乐盒气泡关闭时同步状态。"""
+        self.music_bubble_open = False
+
     # ---------- 闲置气泡 ----------
     def _toggle_bubble(self):
-        if self.bubble_open:
+        if self.music_bubble_open:
+            self.music_bubble.close()
+        elif self.bubble_open:
             self.bubble.close()
         else:
             self._show_main_bubble()
@@ -1017,10 +1801,10 @@ class LionPet:
         self._execute_command(idx)
 
     def _show_music_bubble(self):
-        """音乐盒子气泡：显示音乐盒信息（暂为占位，后续可接入）。"""
-        self.bubble.set_content('音乐盒功能即将上线，敬请期待', [], None)
-        self.bubble_open = True
-        self.bubble.show(self.x, self.y, self.fw, self.fh)
+        """音乐盒气泡：基于 SMTC 显示媒体信息和控制界面。"""
+        self.music_bubble_open = True
+        self.hop_t = 0.35                  # 开心一跳
+        self.music_bubble.show(self.x, self.y, self.fw, self.fh)
 
     def _show_time_bubble(self):
         """时间子气泡：显示当前日期和时间。"""
@@ -1072,6 +1856,8 @@ class LionPet:
         self.root.geometry('+%d+%d' % (int(self.x), int(self.y)))
         if self.bubble_open:
             self.bubble.position(self.x, self.y, self.fw, self.fh)
+        if self.music_bubble_open:
+            self.music_bubble.position(self.x, self.y, self.fw, self.fh)
         if self.idle_bubble.opened:
             self.idle_bubble.position(self.x, self.y, self.fw, self.fh)
 
@@ -1083,6 +1869,10 @@ class LionPet:
             pass
         try:
             self.bubble.close()
+        except Exception:
+            pass
+        try:
+            self.music_bubble.close()
         except Exception:
             pass
         try:
@@ -1123,6 +1913,8 @@ class LionPet:
         self._render()
         if self.bubble_open:
             self.bubble.tick(dt)
+        if self.music_bubble_open:
+            self.music_bubble.tick(dt)
 
         # 配置热更新：每2秒轮询 config.json，检测开关、间隔、昵称是否被管理软件修改
         self._config_check_timer += dt
@@ -1185,6 +1977,12 @@ class LionPet:
             self._step(0.033)
             self.root.update()
         self.bubble.close()
+        # 音乐盒气泡冒烟测试
+        self._show_music_bubble()
+        for _ in range(6):
+            self._step(0.033)
+            self.root.update()
+        self.music_bubble.close()
         self._quit()
         print('TEST OK')
 

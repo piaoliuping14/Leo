@@ -23,8 +23,21 @@
 - 闲置气泡间隔时间配置
 - 设备绑定：配置修改仅本机保留，分享 / 重装自动恢复默认值
 
-### 即将推出
-- **音乐盒功能** 敬请期待
+### 音乐盒（基于 Windows SMTC）
+基于 Windows 系统媒体传输控制（SMTC）接口实现，**仅识别向外输出 SMTC 会话的播放器，不做任何播放器专项适配**。
+
+- **媒体控制**：播放 / 暂停、上一曲、下一曲
+- **进度展示**：实时显示歌曲播放进度与总时长，丝滑插值动画进度条
+- **音量控制**：独立调用 Windows Core Audio API（pycaw），与 SMTC 完全解耦
+- **媒体信息**：显示歌曲标题、艺术家、播放状态
+- **智能降级**：
+  - 无媒体会话时，控件置灰并显示「未检测到媒体源」
+  - SMTC 未提供时长时（如部分第三方插件），进度条置灰并显示「暂未获取进度」
+- **进度防抖**：采用「时间平滑锁定策略」，过滤 SMTC 采样回跳噪声（如 43→44→43 反复跳变），保证进度条平稳前进
+- **兼容规则**：
+  - 网易云音乐 PC 版、QQ 音乐 PC 版需用户自行安装第三方 SMTC 插件
+  - 程序内部不做专项兼容处理
+- **主题可定制**：所有颜色 / 尺寸 / 字体集中在 `music_theme.py`，标注 `# [THEME]`，方便后续「换主题」功能开发
 
 ## 下载使用
 
@@ -49,8 +62,10 @@ python lion_manager.py
 Leo桌面宠物/
 ├── launcher.py            # 启动器（打包入口，支持热更新）
 ├── lion_manager.py        # 管理软件后端（pywebview + HTML）
-├── lion_desktop.py        # 桌宠主体（tkinter 透明窗口）
+├── lion_desktop.py        # 桌宠主体（tkinter 透明窗口 + 音乐盒气泡）
 ├── lion_watchdog.py       # 守护进程（异常退出自动重启）
+├── music_box.py           # 音乐盒核心逻辑（SMTC 媒体控制 + pycaw 音量）
+├── music_theme.py         # 音乐盒主题配置（# [THEME] 标记可配置项）
 ├── build.py               # 构建脚本（PyInstaller 打包）
 ├── build.spec             # PyInstaller 配置
 ├── manager_ui/
@@ -93,6 +108,8 @@ python build.py
 - **pywebview** —— 管理软件界面（WebView2 后端）
 - **Pillow** —— 图片处理与图标转换
 - **PyInstaller** —— 打包为独立 exe
+- **winrt** —— Windows Runtime API（SMTC 系统媒体传输控制）
+- **pycaw** —— Windows Core Audio API（独立音量控制）
 
 ## 默认配置
 

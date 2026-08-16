@@ -12,9 +12,16 @@ config.json
 
 # IDE / editor local config
 .claude/
+.vscode/
+.idea/
 
 # gh CLI 本地配置（含 token，勿提交）
 .gh_config/
+
+# OS 生成的元数据文件
+Thumbs.db
+ehthumbs.db
+.DS_Store
 
 # design 目录：只保留运行必需的 文案.txt，忽略其余设计稿/文档/提示词
 design/*

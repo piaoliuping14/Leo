@@ -26,6 +26,8 @@ APP_FILES = [
     'lion_manager.py',
     'lion_desktop.py',
     'lion_watchdog.py',
+    'music_theme.py',
+    'music_box.py',
     'app-icon.ico',
 ]
 

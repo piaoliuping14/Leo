@@ -14,7 +14,12 @@ a = Analysis(
     pathex=['.'],
     hiddenimports=[
         'lion_manager', 'lion_desktop', 'lion_watchdog',
+        'music_theme', 'music_box',
         'webview', 'PIL', 'PIL.Image', 'PIL.ImageTk', 'PIL.ImageDraw',
+        # 音乐盒：SMTC 媒体控制（winrt）+ 音量控制（pycaw）
+        'pycaw', 'pycaw.pycaw', 'comtypes',
+        'winrt', 'winrt.windows.media.control',
+        'winrt.windows.storage.streams',
     ],
     excludes=['PyQt5', 'PyQt6', 'PySide2', 'PySide6',
               'django', 'matplotlib', 'numpy', 'pandas'],
