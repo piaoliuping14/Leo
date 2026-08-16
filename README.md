@@ -48,6 +48,26 @@
 
 > 无需安装 Python，开箱即用。
 
+### WebView2 运行时说明
+
+本软件管理界面基于 WebView2 渲染，需要系统已安装 **Microsoft Edge WebView2 Runtime**。
+
+| Windows 版本 | 是否需要安装 | 说明 |
+|--------------|-------------|------|
+| Windows 11（所有版本） | ❌ 无需安装 | 系统自带 WebView2 Runtime |
+| Windows 10（1809 及以上，已更新至 2021 年后） | ❌ 多数无需安装 | Windows Update 通常已自动推送 |
+| Windows 10（早期版本或长期未更新） | ✅ 可能需安装 | 若启动失败，请按下方步骤安装 |
+| Windows 7 / 8 / 8.1 | ⚠️ 不支持 | WebView2 不支持这些系统 |
+
+**如何检查是否已安装 WebView2 Runtime：**
+- 打开「设置 → 应用 → 已安装的应用」
+- 搜索 `WebView2`，若列表中有「Microsoft Edge WebView2 Runtime」则已安装
+
+**若未安装或启动报错，请下载安装：**
+- 官方下载：https://developer.microsoft.com/microsoft-edge/webview2/
+- 选择「Evergreen Standalone Installer」(x86 或 x64 根据系统)
+- 安装完成后重新运行 `Leo桌宠.exe` 即可
+
 ### 开发者（源码运行）
 ```bash
 git clone https://github.com/piaoliuping14/Leo.git

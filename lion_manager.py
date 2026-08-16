@@ -417,12 +417,25 @@ def main():
             time.sleep(0.2)
             stop_splash.set()
     # 强制使用 EdgeChromium（WebView2）后端，避免 winforms/pythonnet 依赖 .NET Framework
-    # Windows 11 自带 WebView2，Windows 10 多数预装；若缺失 pywebview 会自动提示安装
+    # Windows 11 自带 WebView2，Windows 10 多数预装；若缺失则提示用户安装
     try:
         webview.start(gui='edgechrom', func=on_ready)
-    except Exception:
-        # WebView2 不可用时回退到默认后端（winforms，需 .NET Framework）
-        webview.start(func=on_ready)
+    except Exception as ex:
+        # WebView2 不可用：弹窗提示用户安装，而非直接崩溃
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                'Leo桌宠启动失败：未检测到 WebView2 Runtime。\n\n'
+                '请安装 Microsoft Edge WebView2 Runtime 后重试：\n'
+                'https://developer.microsoft.com/microsoft-edge/webview2/\n\n'
+                '（Windows 11 自带，Windows 10 多数已预装；'
+                '若长期未更新可能需手动安装）\n\n'
+                '详细错误：' + str(ex),
+                'Leo桌宠 - 启动失败', 0x10)
+        except Exception:
+            pass
+        return
     # 窗口已关闭，清理桌宠和守护进程（用户无感知，不阻塞 UI）
     try:
         api._kill_lion()
