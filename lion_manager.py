@@ -36,7 +36,7 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
     RES_DIR = APP_DIR
     EXE_DIR = APP_DIR
-CONFIG_PATH = os.path.join(EXE_DIR, 'config.json')
+CONFIG_PATH = os.path.join(APP_DIR, 'config.json')
 LOG_DIR = os.path.join(EXE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
@@ -92,6 +92,25 @@ ICON_PATH = os.path.join(RES_DIR, 'app-icon.ico')
 PYW = sys.executable                 # bat 用 pythonw 启动，故为 pythonw.exe
 PET_PORT = 52718                     # 桌宠单实例锁端口（lion_desktop.py）
 MGR_PORT = 52719                     # 管理软件单实例锁端口
+CMD_PORT = 52720                     # 桌宠命令端口（通知自行退出，避免 PowerShell 杀进程慢）
+
+
+def _unblock_downloaded_files():
+    """解除打包目录下文件的 MOTW（Mark of the Web）标记。
+    从网上下载 zip 解压后，Windows 会阻止加载这些 DLL，
+    导致 pythonnet 报 'Failed to resolve Python.Runtime.Loader.Initialize'。"""
+    try:
+        base = EXE_DIR if getattr(sys, 'frozen', False) else APP_DIR
+        internal = os.path.join(base, '_internal')
+        if not os.path.isdir(internal):
+            return
+        for root, dirs, files in os.walk(internal):
+            for name in files:
+                # 删除 Zone.Identifier 备用数据流（即 MOTW 标记）
+                ctypes.windll.kernel32.DeleteFileW(
+                    os.path.join(root, name) + ':Zone.Identifier')
+    except Exception:
+        pass
 
 
 class ManagerApi:
@@ -159,9 +178,13 @@ class ManagerApi:
                 f.write('ok')
         except Exception:
             pass
-        # 多轮杀进程，防止 watchdog 抢先重启桌宠
+        # 优先通过命令端口通知桌宠自行退出（毫秒级，与右键退出同路径）
+        # 桌宠退出后 watchdog 检测到 clean_exit 会自行退出，无需强杀
+        if self._send_quit_to_pet():
+            return True
+        # 命令端口失败（旧版桌宠）→ 回退到 PowerShell 多轮强杀
         for _ in range(3):
-            self._kill_lion()
+            self._kill_lion_force()
             time.sleep(0.4)
         return True
 
@@ -268,7 +291,21 @@ Get-StartApps | ForEach-Object {
         return True
 
     # ---------- 进程清理 ----------
-    def _kill_lion(self):
+    def _send_quit_to_pet(self):
+        """通过命令端口通知桌宠自行退出（瞬间完成，与右键退出同路径）。
+        成功返回 True，失败返回 False。"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(('127.0.0.1', CMD_PORT))
+            s.sendall(b'quit\n')
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    def _kill_lion_force(self):
+        """PowerShell 强杀桌宠和守护进程（命令端口失败时的兜底）。"""
         try:
             subprocess.run(
                 ['powershell', '-NoProfile', '-Command',
@@ -283,6 +320,20 @@ Get-StartApps | ForEach-Object {
                 creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception:
             pass
+
+    def _kill_lion(self):
+        # 写 clean_exit：让 watchdog 检测到桌宠退出后不再重启并自行退出
+        try:
+            with open(CLEAN_EXIT, 'w') as f:
+                f.write('ok')
+        except Exception:
+            pass
+        # 优先通过命令端口通知桌宠自行退出（毫秒级，与右键退出相同路径）
+        # 桌宠退出后 watchdog 检测到 clean_exit 会自行退出，无需强杀
+        if self._send_quit_to_pet():
+            return
+        # 命令端口失败（旧版桌宠或未启动）→ 回退到 PowerShell 强杀
+        self._kill_lion_force()
 
 
 def show_splash(stop_event):
@@ -366,6 +417,7 @@ def show_splash(stop_event):
 
 
 def main():
+    _unblock_downloaded_files()
     # DPI 感知：确保 tkinter splash 和 webview 窗口使用相同坐标系统
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -416,23 +468,27 @@ def main():
             window.show()
             time.sleep(0.2)
             stop_splash.set()
-    # 强制使用 EdgeChromium（WebView2）后端，避免 winforms/pythonnet 依赖 .NET Framework
-    # Windows 11 自带 WebView2，Windows 10 多数预装；若缺失则提示用户安装
+    # 使用 EdgeChromium（WebView2）后端；依赖 pythonnet + .NET Framework 4.7.2+
     try:
         webview.start(gui='edgechrom', func=on_ready)
     except Exception as ex:
-        # WebView2 不可用：弹窗提示用户安装，而非直接崩溃
+        err = str(ex)
+        if 'Python.Runtime' in err or 'Loader' in err or 'clr' in err.lower():
+            hint = ('程序依赖的 .NET 运行时加载失败。\n\n'
+                    '最常见原因：从网上下载的 zip 解压后，文件被 Windows 安全策略阻止。\n'
+                    '解决方法：右键软件所在文件夹 → 属性 → 勾选"解除阻止"，\n'
+                    '或用 PowerShell（管理员）执行：\n'
+                    'Get-ChildItem -Path "软件路径" -Recurse -File | Unblock-File\n'
+                    '若仍失败，请安装 .NET Framework 4.8 运行时。')
+        else:
+            hint = ('可能未安装 WebView2 Runtime。\n'
+                    '下载：`https://developer.microsoft.com/microsoft-edge/webview2/\n`'
+                    '（Windows 11 自带，Windows 10 多数已预装）\n\n'
+                    '也可能是文件被 Windows 安全策略阻止，请尝试解除阻止。')
         try:
-            import ctypes
             ctypes.windll.user32.MessageBoxW(
-                0,
-                'Leo桌宠启动失败：未检测到 WebView2 Runtime。\n\n'
-                '请安装 Microsoft Edge WebView2 Runtime 后重试：\n'
-                'https://developer.microsoft.com/microsoft-edge/webview2/\n\n'
-                '（Windows 11 自带，Windows 10 多数已预装；'
-                '若长期未更新可能需手动安装）\n\n'
-                '详细错误：' + str(ex),
-                'Leo桌宠 - 启动失败', 0x10)
+                0, 'Leo桌宠启动失败。\n\n' + hint +
+                '\n\n详细错误：' + err, 'Leo桌宠 - 启动失败', 0x10)
         except Exception:
             pass
         return

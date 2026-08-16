@@ -37,7 +37,7 @@
 - **兼容规则**：
   - 网易云音乐 PC 版、QQ 音乐 PC 版需用户自行安装第三方 SMTC 插件
   - 程序内部不做专项兼容处理
-- **主题可定制**：所有颜色 / 尺寸 / 字体集中在 `music_theme.py`，标注 `# [THEME]`，方便后续「换主题」功能开发
+- **主题可定制**：所有颜色 / 尺寸 / 字体集中在 `music_theme.py`，标注 `# [THEME]`，方便后续「换主题」功能开发，敬请期待！！
 
 ## 下载使用
 
@@ -103,19 +103,21 @@ Leo桌面宠物/
 
 ## 运行时生成的文件
 
-运行后会在 exe 同目录生成（不影响使用）：
+运行后会生成以下文件（不影响使用）：
 
 ```
-├── config.json            # 用户配置（含设备绑定）
+Leo桌宠/
+├── app/
+│   └── config.json        # 用户配置（含设备绑定）
 └── logs/
     ├── lion.log           # 运行日志
     └── lion_clean_exit.txt # 退出标记（临时文件）
 ```
 
 ## 自行打包
-
 ```bash
-pip install pyinstaller
+pip install -r requirements.txt #若已安装请忽略
+pip install pyinstaller #若已安装则忽略
 python build.py
 ```
 

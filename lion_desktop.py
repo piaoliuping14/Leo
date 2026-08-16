@@ -23,6 +23,7 @@ import time
 import random
 import logging
 import socket
+import threading
 import traceback
 import subprocess
 import webbrowser
@@ -53,7 +54,7 @@ LOG_DIR = os.path.join(EXE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, 'lion.log')
 CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
-CONFIG_PATH = os.path.join(EXE_DIR, 'config.json')
+CONFIG_PATH = os.path.join(APP_DIR, 'config.json')
 QUOTES_PATH = os.path.join(RES_DIR, 'design', '文案.txt')
 ICON_PATH = os.path.join(RES_DIR, 'app-icon.ico')
 
@@ -1998,6 +1999,39 @@ def acquire_lock(port=52718):
         return None
 
 
+# ---------- 命令端口（供管理软件通知桌宠自行退出，避免 PowerShell 杀进程慢）----------
+CMD_PORT = 52720
+
+def start_cmd_server(pet):
+    """后台线程：监听命令端口，收到 'quit' 时让桌宠自行退出。
+    与右键菜单退出走相同的快速路径（root.destroy 瞬间完成）。"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(('127.0.0.1', CMD_PORT))
+        s.listen(1)
+        s.settimeout(0.5)
+    except OSError:
+        return                             # 端口已被占用（极少见），放弃
+    def worker():
+        while True:
+            try:
+                conn, _ = s.accept()
+                try:
+                    data = conn.recv(16).strip().lower()
+                    if data == b'quit':
+                        pet._quit()        # 触发与右键退出相同的路径
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def _drain_lock_socket(sock):
     """后台线程：持续 accept() 锁端口上的连接并立即关闭。
     防止管理软件的 get_status() 轮询连接堆积在 accept 队列中，
@@ -2034,6 +2068,7 @@ def main():
     _drain_lock_socket(_lock)                  # 消费 accept 队列，防止 backlog 满导致状态误判
     try:
         pet = LionPet(scale=scale)
+        start_cmd_server(pet)                  # 启动命令端口，供管理软件通知退出
         if test:
             pet.smoke_test()
         else:
