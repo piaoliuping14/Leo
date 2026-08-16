@@ -42,6 +42,11 @@ os.makedirs(LOG_DIR, exist_ok=True)
 CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
 WATCHDOG = os.path.join(APP_DIR, 'lion_watchdog.py')   # 开发模式用
 
+# 快捷指令默认配置（与 lion_desktop.py 保持一致）
+DEFAULT_COMMANDS = [
+    {'name': '启动B站', 'type': 'url', 'target': 'https://www.bilibili.com/', 'icon': 'play'},
+]
+
 
 def _get_machine_id():
     """获取当前 Windows 机器的唯一 ID（MachineGuid）。
@@ -58,7 +63,7 @@ def _get_machine_id():
 
 def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
-    - config.json 不存在：不做处理
+    - config.json 不存在：首次运行，创建默认配置（含默认指令 + 机器 ID 绑定）
     - machine_id 缺失：首次运行，写入当前机器 ID
     - machine_id 不匹配：换设备/被分享，重置 commands、idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
@@ -66,6 +71,19 @@ def _ensure_device_config():
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception:
+        # config.json 不存在 → 首次运行，创建默认配置
+        try:
+            data = {
+                'commands': list(DEFAULT_COMMANDS),
+                'idle_bubble_enabled': True,
+                'idle_timeout': 60,
+                'nickname': '小Leo',
+                'machine_id': _get_machine_id()
+            }
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
         return
     cur_mid = _get_machine_id()
     saved_mid = data.get('machine_id', '')

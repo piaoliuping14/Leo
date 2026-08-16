@@ -69,12 +69,13 @@ DEFAULT_COMMANDS = [
 
 
 def load_commands():
-    """从 config.json 读取快捷指令；缺失或异常时回退默认列表。"""
+    """从 config.json 读取快捷指令；缺失或异常时回退默认列表。
+    注意：空列表 [] 是合法值（用户删除了所有指令），不应回退默认。"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         cmds = data.get('commands')
-        if cmds:
+        if cmds is not None:
             return cmds
     except Exception:
         pass
@@ -124,7 +125,7 @@ def _get_machine_id():
 
 def _ensure_device_config():
     """确保 config.json 中的设备相关配置与当前设备绑定。
-    - config.json 不存在：不做处理（各读取函数返回默认值）
+    - config.json 不存在：首次运行，创建默认配置（含默认指令 + 机器 ID 绑定）
     - machine_id 缺失：首次运行，写入当前机器 ID
     - machine_id 不匹配：换设备/被分享，重置 commands、idle_timeout=60、nickname=小Leo，更新机器 ID
     - machine_id 匹配：正常使用，不做处理"""
@@ -132,6 +133,19 @@ def _ensure_device_config():
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception:
+        # config.json 不存在 → 首次运行，创建默认配置
+        try:
+            data = {
+                'commands': list(DEFAULT_COMMANDS),
+                'idle_bubble_enabled': True,
+                'idle_timeout': 60,
+                'nickname': '小Leo',
+                'machine_id': _get_machine_id()
+            }
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
         return
     cur_mid = _get_machine_id()
     saved_mid = data.get('machine_id', '')
@@ -930,6 +944,14 @@ class MusicBubbleWindow:
         self._anchor_time = 0.0         # 基准时间戳（monotonic）
         self._last_playing = False      # 上次播放状态（检测状态切换）
 
+        # 跑马灯状态：超长标题向左循环滚动，短标题居中静止
+        self._marquee_text = ''         # 当前标题文本（用于检测变化）
+        self._marquee_active = False    # 是否正在滚动
+        self._marquee_text_w = 0        # 标题文字像素宽度
+        self._marquee_offset = 0.0      # 文字 x 偏移（负=向左）
+        self._marquee_phase = 0         # 0=开头停留 1=向左滚动 2=末尾停留
+        self._marquee_timer = 0.0       # 当前阶段计时器
+
         # 字体（从主题配置创建）
         self.font_title = self._make_font(MusicTheme.TITLE_FONT)
         self.font_artist = self._make_font(MusicTheme.ARTIST_FONT)
@@ -955,7 +977,8 @@ class MusicBubbleWindow:
         self.img_item = self.canvas.create_image(0, 0, anchor='nw')
 
         # 控件引用
-        self.title_label = None
+        self.title_canvas = None
+        self.title_text_id = None
         self.artist_label = None
         self.time_cur_label = None
         self.time_dur_label = None
@@ -985,7 +1008,8 @@ class MusicBubbleWindow:
         t = MusicTheme
         self.bw = t.BUBBLE_W
 
-        title_h = self.font_title.metrics('linespace')
+        self.title_h = self.font_title.metrics('linespace')
+        title_h = self.title_h
         artist_h = self.font_artist.metrics('linespace')
         time_h = self.font_time.metrics('linespace')
         vol_h = self.font_vol.metrics('linespace')
@@ -1015,12 +1039,12 @@ class MusicBubbleWindow:
         """创建所有控件。"""
         t = MusicTheme
 
-        # 标题
-        self.title_label = tk.Label(self.top, text='未检测到媒体源',
-                                    font=self.font_title,
-                                    fg=t._hex(t.TITLE_COLOR),
-                                    bg=t._hex(t.BG),
-                                    relief='flat', bd=0, highlightthickness=0)
+        # 标题（Canvas 容器，裁剪超长文本并支持跑马灯滚动）
+        self.title_canvas = tk.Canvas(self.top, width=10, height=self.title_h,
+                                      bg=t._hex(t.BG), highlightthickness=0, bd=0)
+        self.title_text_id = self.title_canvas.create_text(
+            0, self.title_h // 2, text='未检测到媒体源',
+            font=self.font_title, fill=t._hex(t.TITLE_COLOR), anchor='w')
 
         # 艺术家
         self.artist_label = tk.Label(self.top, text='请打开支持 SMTC 的播放器',
@@ -1132,9 +1156,9 @@ class MusicBubbleWindow:
         body_x = 0 if tail_right else self.TAIL_ALLOW
         content_w = self.bw - 2 * t.PAD_LR
 
-        # 标题（居中）
-        self.title_label.place(x=body_x + t.PAD_LR, y=self.title_y,
-                               width=content_w)
+        # 标题（Canvas 容器，裁剪超长文本）
+        self.title_canvas.place(x=body_x + t.PAD_LR, y=self.title_y,
+                                width=content_w)
 
         # 艺术家（居中）
         self.artist_label.place(x=body_x + t.PAD_LR, y=self.artist_y,
@@ -1236,6 +1260,8 @@ class MusicBubbleWindow:
                     m.position_sec = self._anchor_pos
             self._refresh_progress()
             self._refresh_volume()
+        # 跑马灯动画（每帧更新，与媒体回调无关）
+        self._tick_marquee(dt)
 
     def close(self):
         """关闭气泡。"""
@@ -1334,7 +1360,7 @@ class MusicBubbleWindow:
 
         if m.available:
             # 有媒体源
-            self.title_label.config(text=m.title or '未知歌曲')
+            self._update_title(m.title or '未知歌曲')
             self.artist_label.config(text=m.artist or '未知艺术家')
             icon = '⏸' if m.is_playing else '▶'
             self.play_btn.config(text=icon, state='normal')
@@ -1342,7 +1368,7 @@ class MusicBubbleWindow:
             self.next_btn.config(state='normal')
         else:
             # 无媒体源 -> 置灰控件
-            self.title_label.config(text='未检测到媒体源')
+            self._update_title('未检测到媒体源')
             self.artist_label.config(text='请打开支持 SMTC 的播放器')
             self.play_btn.config(text='▶', state='disabled')
             self.prev_btn.config(state='disabled')
@@ -1350,6 +1376,69 @@ class MusicBubbleWindow:
 
         self._refresh_progress()
         self._refresh_volume()
+
+    # ---------- 跑马灯 ----------
+    # 滚动速度 px/s、停留时间 秒、末尾间距 px
+    MARQUEE_SPEED = 32
+    MARQUEE_HOLD = 1.0
+    MARQUEE_GAP = 20
+
+    def _update_title(self, text):
+        """更新标题显示：超长标题启动跑马灯滚动，短标题居中静止。
+
+        标题未变化时不重置跑马灯状态，避免每秒回调打断滚动动画。
+        """
+        if text == self._marquee_text:
+            return
+        self._marquee_text = text
+        t = MusicTheme
+        canvas_w = self.bw - 2 * t.PAD_LR
+        self.title_canvas.itemconfig(self.title_text_id, text=text)
+        text_w = self.font_title.measure(text)
+        if text_w > canvas_w:
+            # 超长标题：左对齐 + 跑马灯
+            self._marquee_active = True
+            self._marquee_text_w = text_w
+            self._marquee_offset = 0.0
+            self._marquee_phase = 0
+            self._marquee_timer = 0.0
+            self.title_canvas.itemconfig(self.title_text_id, anchor='w')
+            self.title_canvas.coords(self.title_text_id,
+                                     0, self.title_h // 2)
+        else:
+            # 短标题：居中静止
+            self._marquee_active = False
+            self.title_canvas.itemconfig(self.title_text_id, anchor='center')
+            self.title_canvas.coords(self.title_text_id,
+                                     canvas_w // 2, self.title_h // 2)
+
+    def _tick_marquee(self, dt):
+        """跑马灯动画：超长标题向左循环滚动（开头停留→滚动→末尾停留→重置）。"""
+        if not self._marquee_active:
+            return
+        canvas_w = self.bw - 2 * MusicTheme.PAD_LR
+        scroll_dist = self._marquee_text_w + self.MARQUEE_GAP - canvas_w
+        if scroll_dist <= 0:
+            return
+        if self._marquee_phase == 0:          # 开头停留
+            self._marquee_timer += dt
+            if self._marquee_timer >= self.MARQUEE_HOLD:
+                self._marquee_phase = 1
+                self._marquee_timer = 0.0
+        elif self._marquee_phase == 1:        # 向左滚动
+            self._marquee_offset -= self.MARQUEE_SPEED * dt
+            if self._marquee_offset <= -scroll_dist:
+                self._marquee_offset = -scroll_dist
+                self._marquee_phase = 2
+                self._marquee_timer = 0.0
+        elif self._marquee_phase == 2:        # 末尾停留
+            self._marquee_timer += dt
+            if self._marquee_timer >= self.MARQUEE_HOLD:
+                self._marquee_offset = 0.0
+                self._marquee_phase = 0
+                self._marquee_timer = 0.0
+        self.title_canvas.coords(self.title_text_id,
+                                 self._marquee_offset, self.title_h // 2)
 
     def _refresh_progress(self):
         """刷新进度条和时间显示。
@@ -1791,8 +1880,12 @@ class LionPet:
     def _show_commands_bubble(self):
         """快捷指令子气泡：展示 config.json 中的指令列表。"""
         self.commands = load_commands()               # 每次打开重新读取，确保最新
-        cmd_names = [c.get('name', '') for c in self.commands]
-        self.bubble.set_content('小主人，您要打开什么呀？', cmd_names, self._on_cmd_btn_click)
+        if not self.commands:
+            # 所有指令被删除 → 显示提示，不展示按钮
+            self.bubble.set_content('请从配置当中添加指令~', [], None)
+        else:
+            cmd_names = [c.get('name', '') for c in self.commands]
+            self.bubble.set_content('小主人，您要打开什么呀？', cmd_names, self._on_cmd_btn_click)
         self.bubble_open = True
         self.bubble.show(self.x, self.y, self.fw, self.fh)
 

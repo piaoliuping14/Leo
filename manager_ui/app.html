@@ -57,6 +57,7 @@
 @layer base { body { background: var(--brand-background); color: var(--brand-foreground); } }
 </style>
 <style>
+  html, body { height: 100%; }
   .view { display: none; }
   .view.active { display: block; }
   .btn { transition: all .15s; cursor: pointer; }
@@ -72,12 +73,27 @@
   .field:focus { border-color: var(--brand-primary); }
   select.field { appearance:none; cursor:pointer; }
   .hidden { display:none !important; }
+  /* 自定义滚动条 — 暖色调主题 */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--brand-border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--brand-muted-foreground); }
+  /* 可滚动视图（设置页）；主页不滚动 */
+  .view-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; }
+  /* 快捷指令页：固定 header + 列表区(约4成)与表单区(约6成)各自独立滚动，表单区超高才滚 */
+  #view-commands.active { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  #view-commands .cmd-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+  #view-commands .form-region { max-height: 60%; overflow-y: auto; overflow-x: hidden; }
+  /* 拖拽相关 */
+  .cmd-grip { cursor: grab; user-select: none; }
+  .cmd-grip:active { cursor: grabbing; }
+  .drag-indicator { height: 3px; background: var(--brand-primary); border-radius: 2px; margin: 0; opacity: 0; transition: opacity .1s; }
 </style>
 </head>
-<body class="font-sans antialiased" style="height:720px; overflow:hidden;">
+<body class="font-sans antialiased" style="height:100%; overflow:hidden;">
 
 <!-- ============ 主页 ============ -->
-<main id="view-home" class="view active relative" style="height:720px;">
+<main id="view-home" class="view active relative" style="height:100%;">
   <!-- 左上角设置按钮 -->
   <button id="btn-settings" class="btn absolute top-4 left-4 w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted z-10">
     <i data-lucide="settings" class="w-5 h-5 text-muted-foreground"></i>
@@ -100,7 +116,7 @@
     <!-- 用于测量文字宽度的隐藏 canvas -->
     <canvas id="nick-measure" style="display:none;"></canvas>
   </div>
-  <div class="flex items-center justify-center p-4" style="height:720px;">
+  <div class="flex items-center justify-center p-4" style="height:100%;">
     <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] p-6 flex flex-col gap-5" style="box-shadow:var(--shadow-2)">
       <!-- 宠物状态 -->
       <section class="flex flex-col items-center gap-4">
@@ -126,7 +142,7 @@
       <!-- 提示 -->
       <div class="bg-muted rounded-[var(--brand-radius-md)] p-3 flex items-start gap-2">
         <i data-lucide="info" class="w-4 h-4 text-muted-foreground shrink-0 mt-0.5"></i>
-        <p class="text-muted-foreground text-xs leading-relaxed">提示：单击宠物弹出对话气泡（快捷指令/天气/时间）；右键宠物可回到右下角或退出。关闭本窗口桌宠自动退出。</p>
+        <p class="text-muted-foreground text-xs leading-relaxed">提示：单击宠物弹出对话气泡（快捷指令/音乐盒/时间）；右键宠物可回到右下角或退出。关闭本窗口桌宠自动退出。</p>
       </div>
     </div>
   </div>
@@ -134,29 +150,33 @@
 
 <!-- ============ 快捷指令配置 ============ -->
 <main id="view-commands" class="view">
-  <div class="max-w-[400px] mx-auto px-4 py-6 flex flex-col gap-5">
-    <!-- Header -->
+  <!-- Header（固定） -->
+  <div class="max-w-[400px] w-full mx-auto px-4 pt-6 pb-2 shrink-0">
     <div class="flex items-center gap-3">
       <button id="btn-back" class="btn w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted shrink-0">
         <i data-lucide="chevron-left" class="w-5 h-5"></i>
       </button>
       <div class="flex-1">
         <h1 class="text-xl font-bold tracking-tight">快捷指令</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">拖拽排序 · 点击编辑 · 气泡按三列网格展示</p>
+        <p class="text-sm text-muted-foreground mt-0.5">拖拽排序 · 点击编辑</p>
       </div>
     </div>
+  </div>
 
-    <!-- 指令列表 -->
-    <div id="command-list" class="flex flex-col gap-2"></div>
+  <!-- 可滚动列表区域 -->
+  <div class="cmd-scroll">
+    <div class="max-w-[400px] mx-auto px-4 pb-4 flex flex-col gap-4">
+      <div id="command-list" class="flex flex-col gap-2"></div>
+      <button id="btn-add" class="btn flex items-center justify-center gap-2 border-2 border-dashed border-border rounded-[var(--brand-radius-md)] px-4 py-4 hover:border-primary hover:bg-primary/[0.04]">
+        <div class="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><i data-lucide="plus" class="w-4 h-4"></i></div>
+        <span class="text-sm font-medium text-muted-foreground">添加快捷指令</span>
+      </button>
+    </div>
+  </div>
 
-    <!-- 添加按钮 -->
-    <button id="btn-add" class="btn flex items-center justify-center gap-2 border-2 border-dashed border-border rounded-[var(--brand-radius-md)] px-4 py-4 hover:border-primary hover:bg-primary/[0.04]">
-      <div class="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><i data-lucide="plus" class="w-4 h-4"></i></div>
-      <span class="text-sm font-medium text-muted-foreground">添加快捷指令</span>
-    </button>
-
-    <!-- 编辑表单 -->
-    <div id="form-card" class="hidden bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex flex-col gap-3" style="box-shadow:var(--shadow-1)">
+  <!-- 表单区域：最大 60% 高，内容超高才内部滚动；不固定底部，随内容流排列 -->
+  <div class="form-region max-w-[400px] w-full mx-auto px-4 pb-8 pt-3">
+    <div id="form-card" class="hidden bg-card border border-border rounded-[var(--brand-radius-md)] p-4 flex flex-col gap-3" style="box-shadow:var(--shadow-2)">
       <h3 id="form-title" class="text-sm font-semibold">新增指令</h3>
       <button id="btn-pick-app" type="button" class="btn flex items-center justify-center gap-2 bg-muted hover:bg-primary/[0.06] rounded-[var(--brand-radius-sm)] py-2 text-sm font-medium text-muted-foreground">
         <i data-lucide="search" class="w-4 h-4"></i><span>从已安装应用选择</span>
@@ -201,7 +221,7 @@
 </main>
 
 <!-- ============ 设置 ============ -->
-<main id="view-settings" class="view">
+<main id="view-settings" class="view view-scroll">
   <div class="max-w-[400px] mx-auto px-4 py-6 flex flex-col gap-5">
     <!-- Header -->
     <div class="flex items-center gap-3">
@@ -258,7 +278,7 @@
 <script>
 let commands = [];
 let editingIndex = -1;
-let dragSrcIdx = null;
+let drag = null;       // 拖拽状态对象
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -366,12 +386,11 @@ function renderCommands(){
   }
   commands.forEach((cmd, i) => {
     const div = document.createElement('div');
-    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3 cursor-grab';
+    div.className = 'cmd-item flex items-center gap-3 bg-card border border-border rounded-[var(--brand-radius-md)] px-4 py-3';
     div.style.boxShadow = 'var(--shadow-1)';
-    div.draggable = true;
     div.dataset.idx = i;
     div.innerHTML = `
-      <div class="shrink-0 text-muted-foreground/30">
+      <div class="cmd-grip shrink-0 text-muted-foreground/30" data-grip="1">
         <i data-lucide="grip-vertical" class="w-4 h-4"></i>
       </div>
       <div class="w-9 h-9 rounded-[var(--brand-radius-sm)] bg-muted flex items-center justify-center shrink-0">
@@ -385,43 +404,10 @@ function renderCommands(){
         <i data-lucide="x" class="w-4 h-4"></i>
       </button>`;
 
-    // 拖拽排序
-    div.addEventListener('dragstart', (e) => {
-      dragSrcIdx = i;
-      div.style.opacity = '0.4';
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    div.addEventListener('dragend', () => {
-      div.style.opacity = '';
-      list.querySelectorAll('.cmd-item').forEach(el => {
-        el.style.borderTopColor = '';
-        el.style.borderBottomColor = '';
-      });
-      dragSrcIdx = null;
-    });
-    div.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      if (dragSrcIdx !== null && i !== dragSrcIdx) {
-        list.querySelectorAll('.cmd-item').forEach(el => {
-          el.style.borderTopColor = '';
-          el.style.borderBottomColor = '';
-        });
-        if (i < dragSrcIdx) {
-          div.style.borderTopColor = 'var(--brand-primary)';
-        } else {
-          div.style.borderBottomColor = 'var(--brand-primary)';
-        }
-      }
-    });
-    div.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (dragSrcIdx !== null && dragSrcIdx !== i) {
-        const moved = commands.splice(dragSrcIdx, 1)[0];
-        commands.splice(i, 0, moved);
-        window.pywebview.api.save_commands(commands);
-        renderCommands();
-      }
+    // 拖拽排序：仅从 grip 手柄发起，鼠标事件实现
+    div.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('[data-grip]')) return;
+      startDrag(e, i, div);
     });
 
     div.querySelector('.cmd-del').addEventListener('click', (e)=>{ e.stopPropagation(); deleteCommand(i); });
@@ -429,6 +415,111 @@ function renderCommands(){
     list.appendChild(div);
   });
   lucide.createIcons();
+}
+
+// ========== 拖拽排序（鼠标事件实现，约束在列表区域内）==========
+function startDrag(e, idx, item){
+  e.preventDefault();
+  const list = $('command-list');
+  const itemRect = item.getBoundingClientRect();
+  const listRect = list.getBoundingClientRect();
+
+  // 创建幽灵克隆（跟随鼠标，约束在列表垂直范围内）
+  const ghost = item.cloneNode(true);
+  ghost.style.cssText = `position:fixed; width:${itemRect.width}px; left:${itemRect.left}px;`
+    + ` top:${itemRect.top}px; z-index:100; opacity:0.85; pointer-events:none;`
+    + ` box-shadow:0 8px 24px rgba(45,36,32,0.2); border:1px solid var(--brand-primary);`
+    + ` border-radius:var(--brand-radius-md); background:var(--brand-card);`;
+  document.body.appendChild(ghost);
+
+  // 原始条目半透明
+  item.style.opacity = '0.25';
+
+  // 插入位置指示线
+  const indicator = document.createElement('div');
+  indicator.className = 'drag-indicator';
+
+  drag = {
+    idx, item, ghost, indicator,
+    offsetY: e.clientY - itemRect.top,
+    ghostH: itemRect.height,
+    listRect, targetIdx: idx
+  };
+
+  document.addEventListener('mousemove', onDragMove);
+  document.addEventListener('mouseup', onDragEnd);
+}
+
+function onDragMove(e){
+  if (!drag) return;
+  e.preventDefault();
+
+  // 幽灵跟随鼠标，约束在列表垂直范围内
+  let top = e.clientY - drag.offsetY;
+  const minTop = drag.listRect.top;
+  const maxTop = drag.listRect.bottom - drag.ghostH;
+  top = Math.max(minTop, Math.min(maxTop, top));
+  drag.ghost.style.top = top + 'px';
+
+  // 计算插入位置：遍历所有条目（含被拖拽的），按鼠标 Y 与各条目中点比较
+  const list = $('command-list');
+  const allItems = Array.from(list.querySelectorAll('.cmd-item'));
+  const otherItems = allItems.filter((_, i) => i !== drag.idx);
+
+  let insertBefore = null;
+  for (const el of otherItems) {
+    const rect = el.getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) {
+      insertBefore = el;
+      break;
+    }
+  }
+
+  // targetIdx = 在 otherItems 中的插入位置（= 移除拖拽项后的 commands 索引）
+  let targetIdx;
+  if (insertBefore === null) {
+    targetIdx = otherItems.length;
+  } else {
+    targetIdx = otherItems.indexOf(insertBefore);
+  }
+
+  // 更新指示线位置
+  if (targetIdx !== drag.targetIdx) {
+    drag.targetIdx = targetIdx;
+    if (drag.indicator.parentNode) drag.indicator.parentNode.removeChild(drag.indicator);
+    if (insertBefore) {
+      list.insertBefore(drag.indicator, insertBefore);
+    } else if (otherItems.length > 0) {
+      otherItems[otherItems.length - 1].after(drag.indicator);
+    } else {
+      list.appendChild(drag.indicator);
+    }
+    drag.indicator.style.opacity = '1';
+  }
+}
+
+function onDragEnd(e){
+  if (!drag) return;
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
+
+  const reordered = drag.targetIdx !== drag.idx;
+
+  // 执行排序
+  if (reordered) {
+    const moved = commands.splice(drag.idx, 1)[0];
+    commands.splice(drag.targetIdx, 0, moved);
+    window.pywebview.api.save_commands(commands);
+  }
+
+  // 清理幽灵和指示线
+  drag.ghost.remove();
+  drag.item.style.opacity = '';
+  if (drag.indicator.parentNode) drag.indicator.parentNode.removeChild(drag.indicator);
+  drag = null;
+
+  // 仅在发生排序时重新渲染（避免无操作时的闪烁）
+  if (reordered) renderCommands();
 }
 
 function showView(id){
