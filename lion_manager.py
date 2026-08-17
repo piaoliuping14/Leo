@@ -18,8 +18,12 @@ import time
 import socket
 import struct
 import ctypes
+import shutil
 import subprocess
 import threading
+import tempfile
+import zipfile
+import urllib.request
 import tkinter as tk
 from PIL import Image, ImageTk
 
@@ -111,6 +115,61 @@ PYW = sys.executable                 # bat 用 pythonw 启动，故为 pythonw.e
 PET_PORT = 52718                     # 桌宠单实例锁端口（lion_desktop.py）
 MGR_PORT = 52719                     # 管理软件单实例锁端口
 CMD_PORT = 52720                     # 桌宠命令端口（通知自行退出，避免 PowerShell 杀进程慢）
+
+# ---------- 版本更新 ----------
+GITHUB_REPO = 'piaoliuping14/Leo'
+GITHUB_API_LATEST = 'https://api.github.com/repos/%s/releases/latest' % GITHUB_REPO
+VERSION_FILE = os.path.join(APP_DIR, 'version.json')
+
+
+def _local_version():
+    """读取本地版本号。打包产物读 version.json；开发模式读 build.py 的 VERSION。"""
+    try:
+        with open(VERSION_FILE, 'r', encoding='utf-8') as f:
+            v = str(json.load(f).get('version', ''))
+        if v:
+            return v
+    except Exception:
+        pass
+    if not getattr(sys, 'frozen', False):
+        try:
+            import build
+            v = str(getattr(build, 'VERSION', ''))
+            if v:
+                return v
+        except Exception:
+            pass
+    return '0.0'
+
+
+def _parse_version(s):
+    """把 'v1.2' / '1.2.0' 解析成 (major, minor, patch) 数字元组；失败返回 (0,0,0)。"""
+    try:
+        nums = []
+        for part in ''.join(
+                c if c.isdigit() or c == '.' else ' ' for c in str(s)).split():
+            nums.extend(int(n) for n in part.split('.') if n)
+        nums = nums[:3]
+        nums += [0] * (3 - len(nums))
+        return tuple(nums)
+    except Exception:
+        return (0, 0, 0)
+
+
+def _fetch_latest_release():
+    """请求 GitHub Releases 最新版。返回 dict 或 None（网络异常）。"""
+    try:
+        req = urllib.request.Request(GITHUB_API_LATEST, headers={'User-Agent': 'Leo'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        assets = data.get('assets') or []
+        return {
+            'tag_name': str(data.get('tag_name', '')),
+            'body': str(data.get('body') or ''),
+            'zip_url': assets[0]['browser_download_url'] if assets else '',
+        }
+    except Exception:
+        return None
 
 
 def _unblock_downloaded_files():
@@ -307,6 +366,78 @@ Get-StartApps | ForEach-Object {
         except Exception:
             return False
         return True
+
+    # ---------- 版本更新 ----------
+    def check_update(self):
+        """对比远程 Releases 与本地版本。网络失败返回 ok:False（前端静默处理）。"""
+        release = _fetch_latest_release()
+        if not release or not release['tag_name']:
+            return {'ok': False, 'has_update': False, 'error': '网络不可用'}
+        current = _local_version()
+        has_update = _parse_version(release['tag_name']) > _parse_version(current)
+        return {
+            'ok': True,
+            'has_update': has_update,
+            'current': current,
+            'latest': release['tag_name'],
+            'notes': release['body'][:2000],
+            'zip_url': release['zip_url'],
+        }
+
+    def apply_update(self):
+        """后台线程下载最新 zip 并覆盖 app/ 目录。完成后通过 JS 回调通知前端。"""
+        try:
+            threading.Thread(target=self._do_apply_update, daemon=True).start()
+        except Exception:
+            return False
+        return True
+
+    def _do_apply_update(self):
+        """在后台线程执行：下载 → 解压覆盖 → 回调前端。"""
+        result = {'ok': False, 'msg': '未知错误'}
+        try:
+            release = _fetch_latest_release()
+            if not release or not release['zip_url']:
+                result = {'ok': False, 'msg': '无法获取下载地址'}
+            else:
+                zip_path = os.path.join(tempfile.gettempdir(), 'leo_update.zip')
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+                req = urllib.request.Request(release['zip_url'],
+                                             headers={'User-Agent': 'Leo'})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    with open(zip_path, 'wb') as f:
+                        shutil.copyfileobj(resp, f)
+                updated = 0
+                with zipfile.ZipFile(zip_path) as zf:
+                    for name in zf.namelist():
+                        # zip 内条目形如 Leo桌宠/app/...，取 app/ 之后的部分
+                        marker = '/app/'
+                        idx = name.find(marker)
+                        if idx < 0 or name.endswith('/'):
+                            continue
+                        rel = name[idx + len(marker):]
+                        dest = os.path.join(APP_DIR, rel)
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        with zf.open(name) as src, open(dest, 'wb') as dst:
+                            shutil.copyfileobj(src, dst)
+                        updated += 1
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+                result = {'ok': True, 'msg': '更新完成，共更新 %d 个文件' % updated}
+        except Exception as e:
+            result = {'ok': False, 'msg': '更新失败：%s' % e}
+        # 回调前端（pywebview 需在主线程执行）
+        try:
+            if self._window:
+                self._window.evaluate_js(
+                    'window.onUpdateApplied(%s)' % json.dumps(result))
+        except Exception:
+            pass
 
     # ---------- 进程清理 ----------
     def _send_quit_to_pet(self):

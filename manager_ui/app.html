@@ -95,8 +95,9 @@
 <!-- ============ 主页 ============ -->
 <main id="view-home" class="view active relative" style="height:100%;">
   <!-- 左上角设置按钮 -->
-  <button id="btn-settings" class="btn absolute top-4 left-4 w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted z-10">
+  <button id="btn-settings" class="btn absolute top-4 left-4 w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted z-10 relative">
     <i data-lucide="settings" class="w-5 h-5 text-muted-foreground"></i>
+    <span id="dot-settings" class="hidden absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-[var(--bg)]" style="background:var(--state-error)"></span>
   </button>
   <!-- 顶部昵称展示区：绝对定位在卡片上方空白处居中 -->
   <div class="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center" id="nickname-bar">
@@ -255,9 +256,19 @@
         <input id="input-interval" type="text" inputmode="numeric" class="field" style="width:64px; height:32px; text-align:center; padding:0 4px; font-size:14px;" value="60" />
         <span class="text-sm">秒给你加油喔~</span>
       </div>
-      <!-- 保存按钮 -->
-      <button id="btn-save-settings" class="btn btn-primary w-full py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium flex items-center justify-center gap-2">
-        <i data-lucide="check" class="w-4 h-4"></i><span>保存</span>
+    </div>
+
+    <!-- 检查更新行 -->
+    <div class="bg-card border border-border rounded-[var(--brand-radius-md)] p-4" style="box-shadow:var(--shadow-1)">
+      <button id="row-check-update" class="w-full flex items-center justify-between cursor-pointer text-left">
+        <div class="flex flex-col gap-1">
+          <p class="text-sm font-medium">检查更新</p>
+          <p id="update-version-line" class="text-xs text-muted-foreground">点击检查新版本</p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="dot-update-row" class="hidden w-2.5 h-2.5 rounded-full" style="background:var(--state-error)"></span>
+          <i data-lucide="chevron-right" class="w-5 h-5 text-muted-foreground"></i>
+        </div>
       </button>
     </div>
   </div>
@@ -275,10 +286,40 @@
   </div>
 </div>
 
+<!-- ============ 更新详情浮层 ============ -->
+<div id="update-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(45,36,32,0.4)">
+  <div class="w-full max-w-[400px] bg-card rounded-[var(--brand-radius-lg)] flex flex-col overflow-hidden" style="box-shadow:var(--shadow-2); max-height:80vh">
+    <div class="flex items-center justify-between p-4 border-b border-border">
+      <h2 id="upd-title" class="text-base font-bold tracking-tight">检查更新</h2>
+      <button id="upd-close" type="button" class="text-muted-foreground hover:text-foreground shrink-0"><i data-lucide="x" class="w-5 h-5"></i></button>
+    </div>
+    <div class="flex flex-col gap-3 p-4 overflow-y-auto">
+      <div class="flex items-center gap-2 text-sm">
+        <span class="text-muted-foreground">当前版本</span>
+        <span id="upd-current" class="font-medium">-</span>
+      </div>
+      <div class="flex items-center gap-2 text-sm">
+        <span class="text-muted-foreground">最新版本</span>
+        <span id="upd-latest" class="font-medium">-</span>
+      </div>
+      <div id="upd-notes-wrap" class="hidden">
+        <div class="h-px bg-border my-1"></div>
+        <p class="text-sm font-medium mb-1">更新说明</p>
+        <div id="upd-notes" class="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed"></div>
+      </div>
+    </div>
+    <div class="flex gap-2 p-4 border-t border-border">
+      <button id="upd-cancel" class="btn btn-ghost flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">取消</button>
+      <button id="upd-apply" class="btn btn-primary flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium hidden">立即更新</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let commands = [];
 let editingIndex = -1;
 let drag = null;       // 拖拽状态对象
+let updateState = null;   // check_update() 的结果
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -287,6 +328,7 @@ async function init(){
   try { await refreshStatus(); } catch(e){}
   try { await loadCommands(); } catch(e){}
   try { await loadNickname(); } catch(e){}
+  try { await refreshUpdate(); } catch(e){}
   lucide.createIcons();
   setInterval(()=>{ refreshStatus().catch(()=>{}); }, 2000);
   // 通知 Python 页面加载完成，显示窗口并关闭 splash
@@ -596,13 +638,14 @@ $('btn-settings').addEventListener('click', async ()=>{
     lucide.createIcons();
   } catch(e){}
 });
-$('btn-settings-back').addEventListener('click', ()=>{ showView('view-home'); });
 // 输入框仅允许数字
 $('input-interval').addEventListener('input', (e) => {
   e.target.value = e.target.value.replace(/[^0-9]/g, '');
 });
-// 保存设置：开关 + 间隔，立即生效
-$('btn-save-settings').addEventListener('click', async () => {
+
+// ---------- 自动保存设置 ----------
+// 设置间隔/开关只存在内存，离开设置页（返回主页）时保存
+async function saveSettingsAuto(){
   const enabled = $('toggle-idle').checked;
   let timeout = parseInt($('input-interval').value);
   if (!timeout || timeout < 1) timeout = 60;
@@ -612,17 +655,21 @@ $('btn-save-settings').addEventListener('click', async () => {
       idle_timeout: timeout,
       nickname: curNickname
     });
-    // 保存成功反馈
-    const btn = $('btn-save-settings');
-    const span = btn.querySelector('span');
-    const orig = span.textContent;
-    span.textContent = '已保存';
-    btn.style.opacity = '0.8';
-    setTimeout(() => { span.textContent = orig; btn.style.opacity = ''; }, 1500);
-  } catch(e) {
-    alert('保存失败，请重试');
+  } catch(e) {}
+}
+let settingsDirty = false;
+function markSettingsDirty(){ settingsDirty = true; }
+$('toggle-idle').addEventListener('change', markSettingsDirty);
+$('input-interval').addEventListener('input', markSettingsDirty);
+// 返回主页时自动保存
+$('btn-settings-back').addEventListener('click', async () => {
+  if (settingsDirty){
+    settingsDirty = false;
+    await saveSettingsAuto();
   }
+  showView('view-home');
 });
+// 从设置页切到其他视图（如底部导航）也触发保存——暂无其他入口，保持简单
 
 // ---------- 应用选择浮层 ----------
 let allApps = [];
@@ -686,6 +733,86 @@ $('btn-pick-app').addEventListener('click', openPicker);
 $('picker-close').addEventListener('click', closePicker);
 $('picker-search').addEventListener('input', e => renderPicker(e.target.value));
 $('app-picker').addEventListener('click', e => { if (e.target === $('app-picker')) closePicker(); });
+
+// ---------- 检查更新 ----------
+async function refreshUpdate(){
+  try {
+    updateState = await window.pywebview.api.check_update();
+  } catch(e) {
+    updateState = { ok: false, has_update: false };
+    return;
+  }
+  const has = !!(updateState && updateState.ok && updateState.has_update);
+  $('dot-settings').classList.toggle('hidden', !has);
+  $('dot-update-row').classList.toggle('hidden', !has);
+  if (updateState && updateState.ok){
+    $('update-version-line').textContent = has
+      ? '发现新版本 ' + updateState.latest
+      : '已是最新版本';
+  }
+}
+
+function openUpdateDialog(){
+  $('update-dialog').classList.remove('hidden');
+  const st = updateState || {};
+  const has = !!(st.ok && st.has_update);
+  $('upd-title').textContent = has ? '发现新版本' : '已是最新版本';
+  $('upd-current').textContent = st.current ? 'v' + st.current : '-';
+  $('upd-latest').textContent = st.latest || '-';
+  const notes = (st.notes || '').trim();
+  $('upd-notes-wrap').classList.toggle('hidden', !notes);
+  $('upd-notes').textContent = notes;
+  $('upd-apply').classList.toggle('hidden', !has);
+  $('upd-cancel').textContent = has ? '取消' : '知道了';
+  lucide.createIcons();
+}
+function closeUpdateDialog(){
+  $('update-dialog').classList.add('hidden');
+}
+
+let updating = false;
+$('row-check-update').addEventListener('click', () => {
+  openUpdateDialog();
+});
+$('upd-close').addEventListener('click', closeUpdateDialog);
+$('upd-cancel').addEventListener('click', closeUpdateDialog);
+$('update-dialog').addEventListener('click', e => {
+  if (e.target === $('update-dialog')) closeUpdateDialog();
+});
+$('upd-apply').addEventListener('click', async () => {
+  if (updating) return;
+  updating = true;
+  const btn = $('upd-apply');
+  const span = btn.querySelector('span') || btn;
+  span.textContent = '正在下载更新...';
+  btn.disabled = true;
+  try {
+    await window.pywebview.api.apply_update();
+  } catch(e) {
+    alert('启动更新失败：' + e);
+    span.textContent = '立即更新';
+    btn.disabled = false;
+    updating = false;
+  }
+});
+
+// 后端下载完成后回调
+window.onUpdateApplied = (res) => {
+  if (res && res.ok){
+    alert('更新完成，请重启管理软件生效');
+    closeUpdateDialog();
+    refreshUpdate().catch(()=>{});
+  } else {
+    alert((res && res.msg) ? res.msg : '更新失败，请稍后重试');
+    const btn = $('upd-apply');
+    if (btn){
+      const span = btn.querySelector('span') || btn;
+      span.textContent = '立即更新';
+      btn.disabled = false;
+    }
+  }
+  updating = false;
+};
 
 window.addEventListener('pywebviewready', init);
 </script>
