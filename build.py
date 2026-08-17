@@ -19,7 +19,7 @@ import subprocess
 DIST_NAME = 'Leo桌宠'
 DIST_DIR = os.path.join('dist', DIST_NAME)
 APP_DIR = os.path.join(DIST_DIR, 'app')
-VERSION = '1.2'
+VERSION = '1.3'
 
 # 需要复制到 app/ 的文件（相对项目根目录）
 APP_FILES = [
