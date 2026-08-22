@@ -310,6 +310,7 @@
     </div>
     <div class="flex gap-2 p-4 border-t border-border">
       <button id="upd-cancel" class="btn btn-ghost flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium">取消</button>
+      <button id="upd-open-page" class="btn btn-ghost flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium hidden">前往项目主页</button>
       <button id="upd-apply" class="btn btn-primary flex-1 py-2 rounded-[var(--brand-radius-sm)] text-sm font-medium hidden">立即更新</button>
     </div>
   </div>
@@ -740,7 +741,6 @@ async function refreshUpdate(){
     updateState = await window.pywebview.api.check_update();
   } catch(e) {
     updateState = { ok: false, has_update: false };
-    return;
   }
   const has = !!(updateState && updateState.ok && updateState.has_update);
   $('dot-settings').classList.toggle('hidden', !has);
@@ -753,6 +753,8 @@ async function refreshUpdate(){
         ? '发现新版本 ' + updateState.latest
         : '已是最新版本';
     }
+  } else {
+    $('update-version-line').textContent = '检查更新失败，点击查看';
   }
 }
 
@@ -761,19 +763,31 @@ function openUpdateDialog(){
   const st = updateState || {};
   const has = !!(st.ok && st.has_update);
   const isStore = !!(st.ok && st.store);
+  const failed = !st.ok;
+  // 先重置所有可选按钮/区
+  $('upd-apply').classList.toggle('hidden', true);
+  $('upd-open-page').classList.toggle('hidden', true);
+  $('upd-notes-wrap').classList.toggle('hidden', true);
+  $('upd-notes').textContent = '';
+  $('upd-current').textContent = st.current ? 'v' + st.current : '-';
   if (isStore){
     $('upd-title').textContent = '通过微软商店更新';
-    $('upd-current').textContent = st.current ? 'v' + st.current : '-';
     $('upd-latest').textContent = '—';
-    $('upd-notes-wrap').classList.toggle('hidden', true);
-    $('upd-notes').textContent = '';
-    $('upd-apply').classList.toggle('hidden', true);
     $('upd-cancel').textContent = '知道了';
     lucide.createIcons();
     return;
   }
+  if (failed){
+    $('upd-title').textContent = '检查更新失败';
+    $('upd-latest').textContent = '无法连接更新服务器';
+    if (st.releases_page){
+      $('upd-open-page').classList.toggle('hidden', false);
+    }
+    $('upd-cancel').textContent = '关闭';
+    lucide.createIcons();
+    return;
+  }
   $('upd-title').textContent = has ? '发现新版本' : '已是最新版本';
-  $('upd-current').textContent = st.current ? 'v' + st.current : '-';
   $('upd-latest').textContent = st.latest || '-';
   const notes = (st.notes || '').trim();
   $('upd-notes-wrap').classList.toggle('hidden', !notes);
@@ -795,6 +809,12 @@ $('upd-cancel').addEventListener('click', closeUpdateDialog);
 $('update-dialog').addEventListener('click', e => {
   if (e.target === $('update-dialog')) closeUpdateDialog();
 });
+$('upd-open-page').addEventListener('click', () => {
+  const st = updateState || {};
+  if (st.releases_page){
+    window.open(st.releases_page, '_blank');
+  }
+});
 $('upd-apply').addEventListener('click', async () => {
   if (updating) return;
   updating = true;
@@ -803,7 +823,8 @@ $('upd-apply').addEventListener('click', async () => {
   span.textContent = '正在下载更新...';
   btn.disabled = true;
   try {
-    await window.pywebview.api.apply_update();
+    const zurl = (updateState && updateState.zip_url) ? updateState.zip_url : '';
+    await window.pywebview.api.apply_update(zurl);
   } catch(e) {
     alert('启动更新失败：' + e);
     span.textContent = '立即更新';

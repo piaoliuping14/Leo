@@ -127,7 +127,11 @@ CMD_PORT = 52720                     # 桌宠命令端口（通知自行退出�
 
 # ---------- 版本更新 ----------
 GITHUB_REPO = 'piaoliuping14/Leo'
+GITEE_REPO = 'fangjizhong/Leo'
 GITHUB_API_LATEST = 'https://api.github.com/repos/%s/releases/latest' % GITHUB_REPO
+GITEE_API_LATEST = 'https://gitee.com/api/v5/repos/%s/releases/latest' % GITEE_REPO
+# 更新失败时引导用户手动下载的项目主页（Gitee 优先，国内可访问）
+RELEASES_PAGE = 'https://gitee.com/%s/releases' % GITEE_REPO
 VERSION_FILE = os.path.join(APP_DIR, 'version.json')
 
 
@@ -165,10 +169,10 @@ def _parse_version(s):
         return (0, 0, 0)
 
 
-def _fetch_latest_release():
-    """请求 GitHub Releases 最新版。返回 dict 或 None（网络异常）。"""
+def _fetch_release_from(api_url):
+    """请求单个更新源（GitHub/Gitee 通用格式）。返回 dict 或 None。"""
     try:
-        req = urllib.request.Request(GITHUB_API_LATEST, headers={'User-Agent': 'Leo'})
+        req = urllib.request.Request(api_url, headers={'User-Agent': 'Leo'})
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         assets = data.get('assets') or []
@@ -179,6 +183,11 @@ def _fetch_latest_release():
         }
     except Exception:
         return None
+
+
+def _fetch_latest_release():
+    """优先 Gitee（国内访问快），失败回退 GitHub。返回 dict 或 None。"""
+    return _fetch_release_from(GITEE_API_LATEST) or _fetch_release_from(GITHUB_API_LATEST)
 
 
 def _unblock_downloaded_files():
@@ -383,10 +392,14 @@ Get-StartApps | ForEach-Object {
             # Store 版：由微软商店负责更新，不查 GitHub
             v = _local_version()
             return {'ok': True, 'has_update': False, 'store': True,
-                    'current': v, 'latest': v, 'notes': '', 'zip_url': ''}
+                    'current': v, 'latest': v, 'notes': '', 'zip_url': '',
+                    'releases_page': ''}
         release = _fetch_latest_release()
         if not release or not release['tag_name']:
-            return {'ok': False, 'has_update': False, 'error': '网络不可用'}
+            # 失败也回带本地当前版本，前端至少能显示版本号
+            return {'ok': False, 'has_update': False,
+                    'current': _local_version(), 'error': '网络不可用',
+                    'releases_page': RELEASES_PAGE}
         current = _local_version()
         has_update = _parse_version(release['tag_name']) > _parse_version(current)
         return {
@@ -396,32 +409,38 @@ Get-StartApps | ForEach-Object {
             'latest': release['tag_name'],
             'notes': release['body'][:2000],
             'zip_url': release['zip_url'],
+            'releases_page': RELEASES_PAGE,
         }
 
-    def apply_update(self):
-        """后台线程下载最新 zip 并覆盖 app/ 目录。完成后通过 JS 回调通知前端。"""
+    def apply_update(self, zip_url=''):
+        """后台线程下载最新 zip 并覆盖 app/ 目录。完成后通过 JS 回调通知前端。
+        zip_url 优先复用 check_update 已拿到的地址，避免二次拉取 release。"""
         if STORE_BUILD:
             return False  # Store 版禁止自更新（安装目录只读 + 商店政策）
         try:
-            threading.Thread(target=self._do_apply_update, daemon=True).start()
+            threading.Thread(target=self._do_apply_update, args=(zip_url,), daemon=True).start()
         except Exception:
             return False
         return True
 
-    def _do_apply_update(self):
+    def _do_apply_update(self, zip_url=''):
         """在后台线程执行：下载 → 解压覆盖 → 回调前端。"""
         result = {'ok': False, 'msg': '未知错误'}
         try:
-            release = _fetch_latest_release()
-            if not release or not release['zip_url']:
-                result = {'ok': False, 'msg': '无法获取下载地址'}
+            url = (zip_url or '').strip()
+            if not url:
+                # 兜底：前端未传地址时再拉一次 release
+                release = _fetch_latest_release()
+                url = release['zip_url'] if release else ''
+            if not url:
+                result = {'ok': False, 'msg': '无法获取下载地址，请前往项目主页手动下载'}
             else:
                 zip_path = os.path.join(tempfile.gettempdir(), 'leo_update.zip')
                 try:
                     os.remove(zip_path)
                 except OSError:
                     pass
-                req = urllib.request.Request(release['zip_url'],
+                req = urllib.request.Request(url,
                                              headers={'User-Agent': 'Leo'})
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     with open(zip_path, 'wb') as f:
