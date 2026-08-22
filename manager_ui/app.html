@@ -746,9 +746,13 @@ async function refreshUpdate(){
   $('dot-settings').classList.toggle('hidden', !has);
   $('dot-update-row').classList.toggle('hidden', !has);
   if (updateState && updateState.ok){
-    $('update-version-line').textContent = has
-      ? '发现新版本 ' + updateState.latest
-      : '已是最新版本';
+    if (updateState.store){
+      $('update-version-line').textContent = '通过微软商店更新';
+    } else {
+      $('update-version-line').textContent = has
+        ? '发现新版本 ' + updateState.latest
+        : '已是最新版本';
+    }
   }
 }
 
@@ -756,6 +760,18 @@ function openUpdateDialog(){
   $('update-dialog').classList.remove('hidden');
   const st = updateState || {};
   const has = !!(st.ok && st.has_update);
+  const isStore = !!(st.ok && st.store);
+  if (isStore){
+    $('upd-title').textContent = '通过微软商店更新';
+    $('upd-current').textContent = st.current ? 'v' + st.current : '-';
+    $('upd-latest').textContent = '—';
+    $('upd-notes-wrap').classList.toggle('hidden', true);
+    $('upd-notes').textContent = '';
+    $('upd-apply').classList.toggle('hidden', true);
+    $('upd-cancel').textContent = '知道了';
+    lucide.createIcons();
+    return;
+  }
   $('upd-title').textContent = has ? '发现新版本' : '已是最新版本';
   $('upd-current').textContent = st.current ? 'v' + st.current : '-';
   $('upd-latest').textContent = st.latest || '-';

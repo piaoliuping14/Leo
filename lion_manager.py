@@ -40,8 +40,17 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
     RES_DIR = APP_DIR
     EXE_DIR = APP_DIR
-CONFIG_PATH = os.path.join(APP_DIR, 'config.json')
-LOG_DIR = os.path.join(EXE_DIR, 'logs')
+# 构建开关：Store 版（MSIX）打包时置 1。
+# Store 版安装目录只读，用户可写数据改到 %LOCALAPPDATA%/Leo桌宠；
+# GitHub/直接下载版（默认）仍写 exe 同目录，保持便携与老用户配置不丢。
+STORE_BUILD = os.environ.get('STORE_BUILD', '0') == '1'
+if STORE_BUILD:
+    _DATA_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'Leo桌宠')
+    os.makedirs(_DATA_DIR, exist_ok=True)
+else:
+    _DATA_DIR = None  # 用 EXE_DIR/APP_DIR 原逻辑（便携）
+CONFIG_PATH = os.path.join(_DATA_DIR or APP_DIR, 'config.json')
+LOG_DIR = os.path.join(_DATA_DIR or EXE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
 WATCHDOG = os.path.join(APP_DIR, 'lion_watchdog.py')   # 开发模式用
@@ -370,6 +379,11 @@ Get-StartApps | ForEach-Object {
     # ---------- 版本更新 ----------
     def check_update(self):
         """对比远程 Releases 与本地版本。网络失败返回 ok:False（前端静默处理）。"""
+        if STORE_BUILD:
+            # Store 版：由微软商店负责更新，不查 GitHub
+            v = _local_version()
+            return {'ok': True, 'has_update': False, 'store': True,
+                    'current': v, 'latest': v, 'notes': '', 'zip_url': ''}
         release = _fetch_latest_release()
         if not release or not release['tag_name']:
             return {'ok': False, 'has_update': False, 'error': '网络不可用'}
@@ -386,6 +400,8 @@ Get-StartApps | ForEach-Object {
 
     def apply_update(self):
         """后台线程下载最新 zip 并覆盖 app/ 目录。完成后通过 JS 回调通知前端。"""
+        if STORE_BUILD:
+            return False  # Store 版禁止自更新（安装目录只读 + 商店政策）
         try:
             threading.Thread(target=self._do_apply_update, daemon=True).start()
         except Exception:

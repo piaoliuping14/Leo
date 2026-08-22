@@ -49,12 +49,22 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
     RES_DIR = APP_DIR
     EXE_DIR = APP_DIR
+# 构建开关：Store 版（MSIX）打包时置 1。
+# Store 版安装目录只读，用户可写数据改到 %LOCALAPPDATA%/Leo桌宠；
+# GitHub/直接下载版（默认）仍写 exe 同目录，保持便携与老用户配置不丢。
+STORE_BUILD = os.environ.get('STORE_BUILD', '0') == '1'
+if STORE_BUILD:
+    _DATA_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'Leo桌宠')
+    os.makedirs(_DATA_DIR, exist_ok=True)
+else:
+    _DATA_DIR = None  # 用 EXE_DIR/APP_DIR 原逻辑（便携）
+
 IMG_PATH = os.path.join(RES_DIR, 'katong', '狮子111-no-bg.png')
-LOG_DIR = os.path.join(EXE_DIR, 'logs')
+LOG_DIR = os.path.join(_DATA_DIR or EXE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, 'lion.log')
 CLEAN_EXIT = os.path.join(LOG_DIR, 'lion_clean_exit.txt')
-CONFIG_PATH = os.path.join(APP_DIR, 'config.json')
+CONFIG_PATH = os.path.join(_DATA_DIR or APP_DIR, 'config.json')
 QUOTES_PATH = os.path.join(RES_DIR, 'design', '文案.txt')
 ICON_PATH = os.path.join(RES_DIR, 'app-icon.ico')
 

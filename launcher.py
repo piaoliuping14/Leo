@@ -28,6 +28,9 @@ VERSION_FILE = os.path.join(APP_DIR, 'version.json')
 # 部署时改为实际地址，如 'https://your-server.com/leo-updates'
 UPDATE_URL = os.environ.get('LEO_UPDATE_URL', '')
 
+# 构建开关：Store 版（MSIX）打包时置 1 → 跳过自更新，由微软商店分发更新
+STORE_BUILD = os.environ.get('STORE_BUILD', '0') == '1'
+
 
 def _file_hash(path):
     """计算文件 SHA256。"""
@@ -63,6 +66,8 @@ def _download_file(rel_path):
 
 def check_and_update():
     """检查远程版本，下载变更文件。更新失败不影响启动。"""
+    if STORE_BUILD:
+        return  # Store 版：由微软商店负责更新，禁止自更新
     if not UPDATE_URL:
         return
     try:
