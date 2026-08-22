@@ -12,6 +12,9 @@ import sys
 import json
 import shutil
 import hashlib
+import ctypes
+import subprocess
+import winreg
 import urllib.request
 
 # ---------- 路径 ----------
@@ -30,6 +33,47 @@ UPDATE_URL = os.environ.get('LEO_UPDATE_URL', '')
 
 # 构建开关：Store 版（MSIX）打包时置 1 → 跳过自更新，由微软商店分发更新
 STORE_BUILD = os.environ.get('STORE_BUILD', '0') == '1'
+
+
+# ---------- WebView2 Runtime 依赖检测 ----------
+# pywebview 的 edgechrom 后端需要 WebView2 Runtime（Win11 自带，旧 Win10 可能缺失）。
+# 缺失时弹窗引导下载 Evergreen Bootstrapper，避免黑屏报错。
+_WEBVIEW2_REGKEYS = (
+    r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+    r'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+)
+_WEBVIEW2_BOOTSTRAPPER = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
+
+
+def check_webview2():
+    """检测 WebView2 Runtime 是否已安装。"""
+    for key in _WEBVIEW2_REGKEYS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+                winreg.QueryValueEx(k, 'pv')  # 有 pv 值即已安装
+            return True
+        except FileNotFoundError:
+            continue
+        except Exception:
+            pass
+    return False
+
+
+def ensure_webview2_or_prompt():
+    """缺失 WebView2 时弹窗引导下载，用户确认后打开官方下载页并退出。"""
+    if check_webview2():
+        return
+    # MB_ICONINFORMATION(0x40) | MB_OKCANCEL(0x1)
+    ret = ctypes.windll.user32.MessageBoxW(
+        0,
+        '本应用需要 WebView2 Runtime（Win10 旧版可能未自带）。\n'
+        '点击「确定」打开微软官方下载页，安装后再次启动本应用。',
+        '需要 WebView2 Runtime',
+        0x40 | 0x1,
+    )
+    if ret == 1:  # IDOK
+        subprocess.Popen(['cmd', '/c', 'start', '', _WEBVIEW2_BOOTSTRAPPER])
+    sys.exit(1)
 
 
 def _file_hash(path):
@@ -113,7 +157,8 @@ def main():
             run_module(sys.argv[idx + 1])
         return
 
-    # 正常启动：检查更新 → 运行管理软件
+    # 正常启动：WebView2 检测 → 检查更新 → 运行管理软件
+    ensure_webview2_or_prompt()
     check_and_update()
     run_module('lion_manager')
 
